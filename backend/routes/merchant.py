@@ -7,6 +7,7 @@ from database import get_db
 from models import Product, Order, OrderItem, Campaign, User
 from schemas import SimulationApproveRequest
 from audit_service import log_event
+from auth import get_current_user
 import uuid
 
 router = APIRouter(prefix="/api/merchant", tags=["merchant"])
@@ -20,17 +21,18 @@ class ProductCreateRequest(BaseModel):
     image_url: Optional[str] = "https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?auto=format&fit=crop&w=600&q=80"
 
 @router.get("/products")
-def get_merchant_products(db: Session = Depends(get_db)):
+def get_merchant_products(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Return all products currently stored in the database."""
-    products = db.query(Product).order_by(Product.created_at.desc()).all()
+    products = db.query(Product).filter(Product.merchant_id == current_user.id).order_by(Product.created_at.desc()).all()
     return products
 
 @router.post("/products")
-def create_merchant_product(req: ProductCreateRequest, db: Session = Depends(get_db)):
-    """Create a new product in the SQLite database. Immediately searchable by AI Shopping Agent."""
+def create_merchant_product(req: ProductCreateRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Create a new product and assign it to the authenticated merchant."""
     new_id = f"prod_{uuid.uuid4().hex[:8]}"
     product = Product(
         id=new_id,
+        merchant_id=current_user.id,
         name=req.name.strip(),
         category=req.category.strip(),
         price=float(req.price),
@@ -45,7 +47,7 @@ def create_merchant_product(req: ProductCreateRequest, db: Session = Depends(get
     log_event(
         db=db,
         actor_type="MERCHANT",
-        actor_id="merchant_demo_01",
+        actor_id=current_user.id,
         action="Product Published",
         reason=f"Merchant added new product '{product.name}' in category '{product.category}' (Price: ₹{product.price})",
         metadata={"product_id": product.id, "name": product.name, "category": product.category, "price": product.price, "stock": product.stock},
@@ -59,18 +61,18 @@ def create_merchant_product(req: ProductCreateRequest, db: Session = Depends(get
     }
 
 @router.delete("/products/{product_id}")
-def delete_merchant_product(product_id: str, db: Session = Depends(get_db)):
-    product = db.query(Product).filter(Product.id == product_id).first()
+def delete_merchant_product(product_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    product = db.query(Product).filter(Product.id == product_id, Product.merchant_id == current_user.id).first()
     if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
+        raise HTTPException(status_code=404, detail="Product not found or not owned by merchant")
     db.delete(product)
     db.commit()
     return {"status": "SUCCESS", "message": f"Product {product_id} removed"}
 
 @router.get("/orders")
-def get_merchant_orders(db: Session = Depends(get_db)):
-    """Retrieve all real customer orders for merchant order management."""
-    orders = db.query(Order).order_by(Order.created_at.desc()).all()
+def get_merchant_orders(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Retrieve all orders belonging to the authenticated merchant."""
+    orders = db.query(Order).filter(Order.merchant_id == current_user.id).order_by(Order.created_at.desc()).all()
     result = []
     for o in orders:
         items = []
@@ -151,10 +153,10 @@ def get_insights(db: Session = Depends(get_db)):
     }
 
 @router.post("/approve-campaign")
-def approve_campaign(req: SimulationApproveRequest, db: Session = Depends(get_db)):
+def approve_campaign(req: SimulationApproveRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     campaign = Campaign(
         id=f"camp_{uuid.uuid4().hex[:8]}",
-        merchant_id="merchant_demo_01",
+        merchant_id=current_user.id,
         name=req.title or "Approved Campaign",
         type="BUNDLE_PROMO",
         status="ACTIVE",
@@ -168,7 +170,7 @@ def approve_campaign(req: SimulationApproveRequest, db: Session = Depends(get_db
     log_event(
         db=db,
         actor_type="MERCHANT",
-        actor_id="merchant_demo_01",
+        actor_id=current_user.id,
         action="Campaign approved by merchant",
         reason=f"Merchant approved campaign '{campaign.name}'",
         metadata={"campaign_id": campaign.id, "expected_revenue": campaign.expected_revenue},

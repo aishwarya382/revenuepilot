@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 from database import get_db
-from razorpay_service import create_order as razorpay_create_order, verify_payment_signature
+from services.razorpay_service import razorpay_service
 from audit_service import log_event
 from models import Order, OrderItem, Cart, CartItem, Product
 from services.agent_tools import clear_cart
@@ -30,20 +30,23 @@ class SimulateFailureRequest(BaseModel):
 
 
 def _handle_create_order(req: CreatePaymentOrderRequest, db: Session):
-    order_data = razorpay_create_order(req.amount)
+    order_data = razorpay_service.create_order(req.amount)
     
+    # Create order without merchant_id initially
     order = Order(
         id=f"ord_{uuid.uuid4().hex[:10]}",
         customer_id=req.customer_id or "cust_demo_01",
         total_amount=req.amount,
         status="CREATED",
-        razorpay_order_id=order_data["id"]
+        razorpay_order_id=order_data["id"],
+        merchant_id=""
     )
     db.add(order)
     db.commit()
     db.refresh(order)
 
-    # Save order items if provided
+    # Save order items if provided and determine merchant_id
+    merchant_id = None
     if req.items:
         for it in req.items:
             prod_id = it.get("product_id") or it.get("id")
@@ -51,6 +54,11 @@ def _handle_create_order(req: CreatePaymentOrderRequest, db: Session):
                 # verify product
                 prod = db.query(Product).filter(Product.id == prod_id).first()
                 if prod:
+                    # Ensure all items belong to the same merchant
+                    if merchant_id is None:
+                        merchant_id = prod.merchant_id
+                    elif merchant_id != prod.merchant_id:
+                        raise HTTPException(status_code=400, detail="All items in an order must belong to the same merchant.")
                     qty = int(it.get("quantity", 1))
                     price = float(it.get("price", prod.price))
                     order_item = OrderItem(
@@ -62,6 +70,17 @@ def _handle_create_order(req: CreatePaymentOrderRequest, db: Session):
                     )
                     db.add(order_item)
         db.commit()
+        # Update order with determined merchant_id
+        if merchant_id:
+            order.merchant_id = merchant_id
+            db.add(order)
+            db.commit()
+        else:
+            # No merchant could be determined (no items), keep empty
+            pass
+    else:
+        # No items provided; merchant_id remains empty
+        pass
 
     log_event(
         db=db,
@@ -79,7 +98,9 @@ def _handle_create_order(req: CreatePaymentOrderRequest, db: Session):
 
 
 def _handle_verify_payment(req: VerifyPaymentRequest, db: Session):
-    is_valid = verify_payment_signature(req.razorpay_order_id, req.razorpay_payment_id, req.razorpay_signature)
+    verification_result = razorpay_service.verify_payment(req.razorpay_order_id, req.razorpay_payment_id, req.razorpay_signature)
+    # Determine validity based on service response
+    is_valid = verification_result.get('status') == 'SUCCESS'
     
     order = db.query(Order).filter(Order.razorpay_order_id == req.razorpay_order_id).first()
     if order:

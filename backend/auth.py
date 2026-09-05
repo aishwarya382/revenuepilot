@@ -5,7 +5,8 @@ from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from dotenv import load_dotenv
-
+from fastapi import Depends, HTTPException
+from models import User
 load_dotenv()
 
 SECRET_KEY = os.getenv("SECRET_KEY", "ShopMindSuperSecretKey2026")
@@ -28,15 +29,11 @@ def get_password_hash(password: str) -> str:
         # Fallback SHA256 hash
         return hashlib.sha256(password.encode()).hexdigest()
 
-def get_current_user(token: str = Depends(lambda: None)):
-    # Extract token from Authorization header
-    # FastAPI provides token via Depends on OAuth2 scheme; for simplicity, we parse the header manually
-    from fastapi import Request
-    from fastapi.security import HTTPBearer
-    bearer = HTTPBearer()
-    request = Request(scope={})
-    # This will be replaced by FastAPI's actual request injection in endpoint functions
-    # For now, we assume token is passed directly as argument
+from fastapi.security import OAuth2PasswordBearer
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
@@ -51,6 +48,8 @@ def get_current_user(token: str = Depends(lambda: None)):
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
     return user
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Mail, Lock, Eye, EyeOff, Check, LogIn, TrendingUp, User, Store, ShieldCheck, ArrowRight, RefreshCw, X, AlertCircle, UserPlus, Sparkles } from 'lucide-react';
 import RevenueLogo from './RevenueLogo';
+import SignupLinks from './SignupLinks';
 
 export default function AuthScreen({ onLogin }) {
   // Toggle between Login & Sign Up view mode
@@ -679,10 +680,8 @@ export default function AuthScreen({ onLogin }) {
             </button>
 
           </form>
-              {/* Sign Up Redirect Link */}
-              <div style={{ textAlign: 'center', marginTop: '12px', fontSize: '0.85rem', color: '#64748b' }}>
-                Don't have an account? <a href="#signup" onClick={(e) => { e.preventDefault(); handleToggleSignUp(true); }} style={{ color: '#7c3aed', fontWeight: 600, textDecoration: 'none', cursor: 'pointer' }}>Sign up</a>
-              </div>
+              {/* Sign Up Component */}
+              <SignupLinks onToggleSignUp={handleToggleSignUp} />
         </div> ) : (
           <div>
             <form onSubmit={handleSignUpSubmit}>

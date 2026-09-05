@@ -24,6 +24,7 @@ class Product(Base):
     __tablename__ = "products"
 
     id = Column(String, primary_key=True, default=generate_uuid)
+    merchant_id = Column(String, nullable=False)
     name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     category = Column(String, nullable=False)
@@ -59,6 +60,7 @@ class Order(Base):
 
     id = Column(String, primary_key=True, default=generate_uuid)
     customer_id = Column(String, ForeignKey("users.id"), nullable=False)
+    merchant_id = Column(String, ForeignKey("users.id"), nullable=False)
     total_amount = Column(Float, nullable=False)
     status = Column(String, default="CREATED") # "CREATED", "PAID", "FAILED"
     razorpay_order_id = Column(String, nullable=True, index=True)

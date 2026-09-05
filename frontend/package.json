@@ -10,11 +10,6 @@
     "preview": "vite preview",
     "test": "node backend/test_tenant_isolation.js"
   },
-    "dev": "vite",
-    "build": "vite build",
-    "lint": "oxlint",
-    "preview": "vite preview"
-  },
   "dependencies": {
     "lucide-react": "^1.40.0",
     "react": "^19.2.8",
