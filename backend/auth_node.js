@@ -87,7 +87,7 @@ function verifyAccessToken(token) {
       return null; // Expired
     }
     return payload;
-  } catch (err) {
+  } catch {
     return null;
   }
 }
