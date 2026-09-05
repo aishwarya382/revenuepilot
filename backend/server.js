@@ -455,7 +455,7 @@ async function handleAIChat(req, res) {
   }
 
   const intent = extractIntent(userMessage);
-  const msgLower = userMessage.toLowerCase().trim();
+  const msgLower = userMessage.toLowerCase().replace(/[?!.,;]/g, '').trim();
 
   // Read current active persistent cart from database
   const currentCart = AgentTools.getCart(customerId);
@@ -488,6 +488,299 @@ async function handleAIChat(req, res) {
       tool_calls_executed: ['clear_cart'],
       action_type: 'CART_UPDATED',
       cart_updated: true,
+      modality: currentModality
+    });
+  }
+
+  // =========================================================================
+  // PERSISTENT CART RULE 1B: "REMOVE EVERYTHING EXCEPT [ITEM]" / "KEEP ONLY [ITEM]"
+  // e.g. "remove everything except candles", "keep only candles", "keep only shoes"
+  // =========================================================================
+  const isKeepOnlyCmd = (
+    /^(?:remove\s+(?:everything|all)\s+except|keep\s+only)\s+(?:the\s+|a\s+|an\s+)?([a-z0-9\s]+?)(?:\s+alone|\s+please)?$/i.test(msgLower)
+  );
+  if (isKeepOnlyCmd) {
+    const keepTarget = msgLower
+      .replace(/^(?:remove\s+(?:everything|all)\s+except|keep\s+only)\s+/i, '')
+      .replace(/^(?:the|a|an)\s+/i, '')
+      .replace(/\s+(?:alone|please)$/i, '')
+      .trim();
+
+    // Identify which item(s) in current cart match keepTarget
+    const keepItems = cartItems.filter(it => (it.name || '').toLowerCase().includes(keepTarget) || (it.category || '').toLowerCase().includes(keepTarget));
+
+    if (keepItems.length > 0) {
+      const keepIds = new Set(keepItems.map(k => k.id));
+      for (const it of cartItems) {
+        if (!keepIds.has(it.id)) {
+          AgentTools.removeFromCart(customerId, it.id);
+        }
+      }
+      const updatedCart = AgentTools.getCart(customerId);
+      const keptNames = keepItems.map(k => `**${k.name}**`).join(', ');
+      logAudit('Customer', customerId, 'Keep Only Items via AI', `Retained only ${keptNames} in cart`, { kept: keepItems, modality: currentModality });
+
+      const aiMsg = `Kept only ${keptNames} in your cart.\n\n${formatCartSummary(updatedCart)}`;
+      return res.json({
+        intent: `Keep Only ${keepTarget}`,
+        ai_message: aiMsg,
+        message: aiMsg,
+        cart: updatedCart,
+        cart_items: updatedCart.items,
+        primary_product: keepItems[0],
+        products: keepItems,
+        compared_products: keepItems,
+        bundle: null,
+        tool_calls_executed: ['remove_from_cart'],
+        action_type: 'CART_UPDATED',
+        cart_updated: true,
+        modality: currentModality
+      });
+    }
+  }
+
+  // =========================================================================
+  // NATURAL QUESTION RULE: CART TOTAL / CART STATUS INQUIRY
+  // e.g. "how much is my cart?", "what is my total?", "what's in my cart?", "show my cart"
+  // =========================================================================
+  if (
+    /^(?:how\s+much\s+(?:is\s+)?(?:my\s+)?cart|what(?:'s|\s+is)\s+(?:my\s+)?(?:cart\s+)?total|what(?:'s|\s+is)\s+in\s+my\s+cart|show\s+(?:my\s+)?cart|view\s+cart|cart\s+total)$/i.test(msgLower) ||
+    msgLower === 'cart total' ||
+    msgLower === 'how much is my cart' ||
+    msgLower === "what's my total"
+  ) {
+    const aiMsg = formatCartSummary(currentCart);
+    return res.json({
+      intent: 'Cart Total Inquiry',
+      ai_message: aiMsg,
+      message: aiMsg,
+      cart: currentCart,
+      cart_items: currentCart.items,
+      primary_product: null,
+      products: currentCart.items || [],
+      compared_products: [],
+      bundle: null,
+      tool_calls_executed: ['get_cart'],
+      action_type: 'NOTICE',
+      modality: currentModality
+    });
+  }
+
+  // =========================================================================
+  // NATURAL QUESTION RULE: CART / REMOVAL HISTORY & EXPLANATIONS
+  // e.g. "what did I remove?", "why did you add candles?"
+  // =========================================================================
+  if (/^(?:what\s+did\s+i\s+remove|what\s+was\s+removed|why\s+(?:did\s+you\s+add|are\s+there)\s+candles|why\s+candles)$/i.test(msgLower)) {
+    if (msgLower.includes('why') && msgLower.includes('candle')) {
+      const aiMsg = `Candles were recommended as a complementary celebration accessory for birthday cakes. If you don't need them, simply say **"remove candles"** and I'll remove them right away!`;
+      return res.json({
+        intent: 'Explain Recommendation',
+        ai_message: aiMsg,
+        message: aiMsg,
+        cart: currentCart,
+        cart_items: currentCart.items,
+        primary_product: null,
+        products: [],
+        compared_products: [],
+        bundle: null,
+        tool_calls_executed: [],
+        action_type: 'NOTICE',
+        modality: currentModality
+      });
+    } else {
+      // Check audit logs for recently removed items
+      const recentRemovals = db.prepare("SELECT * FROM audit_logs WHERE actor_id = ? AND action LIKE '%Remove%' ORDER BY created_at DESC LIMIT 3").all(customerId);
+      let aiMsg = '';
+      if (recentRemovals.length > 0) {
+        aiMsg = `Recent changes: ${recentRemovals.map(r => r.reason).join('. ')}.\n\n${formatCartSummary(currentCart)}`;
+      } else {
+        aiMsg = `You haven't removed any items recently.\n\n${formatCartSummary(currentCart)}`;
+      }
+      return res.json({
+        intent: 'History Inquiry',
+        ai_message: aiMsg,
+        message: aiMsg,
+        cart: currentCart,
+        cart_items: currentCart.items,
+        primary_product: null,
+        products: [],
+        compared_products: [],
+        bundle: null,
+        tool_calls_executed: ['get_audit_history'],
+        action_type: 'NOTICE',
+        modality: currentModality
+      });
+    }
+  }
+
+  // =========================================================================
+  // NATURAL QUESTION RULE: CHEAPEST PRODUCT INQUIRY
+  // e.g. "what's the cheapest cake?", "cheapest shoe", "cheapest option", "most affordable cake"
+  // =========================================================================
+  if (/^(?:what(?:'s|\s+is)\s+the\s+)?(?:cheapest|most\s+affordable|lowest\s+price)\s*([a-z0-9\s]*)$/i.test(msgLower)) {
+    const targetCat = msgLower.replace(/^(?:what(?:'s|\s+is)\s+the\s+)?(?:cheapest|most\s+affordable|lowest\s+price)\s*/i, '').trim();
+    let prods = db.prepare("SELECT * FROM products WHERE status = 'published' AND stock > 0 ORDER BY price ASC").all();
+
+    if (targetCat.includes('cake')) {
+      prods = prods.filter(p => p.category.toLowerCase().includes('cake') || p.name.toLowerCase().includes('cake'));
+    } else if (targetCat.includes('shoe') || targetCat.includes('footwear') || targetCat.includes('sneaker')) {
+      prods = prods.filter(p => p.category.toLowerCase().includes('footwear'));
+    } else if (targetCat.includes('laptop')) {
+      prods = prods.filter(p => p.category.toLowerCase().includes('laptop'));
+    }
+
+    if (prods.length > 0) {
+      const cheapest = prods[0];
+      const aiMsg = `The most affordable ${targetCat || 'product'} is **${cheapest.name}** at **₹${cheapest.price.toLocaleString('en-IN')}** (from **${cheapest.merchant_name}**).\n\n• ${cheapest.description}\n\nWould you like me to add **${cheapest.name}** to your cart?`;
+
+      return res.json({
+        intent: 'Cheapest Product Inquiry',
+        ai_message: aiMsg,
+        message: aiMsg,
+        primary_product: cheapest,
+        products: [cheapest],
+        compared_products: [cheapest],
+        bundle: null,
+        tool_calls_executed: ['search_products', 'rank_by_price'],
+        action_type: 'SEARCH_RESULTS',
+        modality: currentModality,
+        follow_up: `Tell me: "Add ${cheapest.name} to cart"`
+      });
+    }
+  }
+
+  // =========================================================================
+  // NATURAL QUESTION RULE: "CAN I GET THIS CHEAPER?" / "I WANT SOMETHING CHEAPER"
+  // =========================================================================
+  if (/^(?:can\s+i\s+get\s+this\s+cheaper|i\s+want\s+something\s+cheaper|cheaper\s+alternative|show\s+cheaper\s+options?|find\s+a\s+cheaper\s+one)$/i.test(msgLower)) {
+    const reference = session.last_selected_product || cartItems[0];
+    if (reference) {
+      const cheaperProds = db.prepare("SELECT * FROM products WHERE merchant_id = ? AND category = ? AND price < ? AND stock > 0 ORDER BY price ASC")
+        .all(reference.merchant_id, reference.category, reference.price);
+
+      if (cheaperProds.length > 0) {
+        const alt = cheaperProds[0];
+        const savings = reference.price - alt.price;
+        const aiMsg = `A more budget-friendly alternative is **${alt.name}** for **₹${alt.price.toLocaleString('en-IN')}** (saving you **₹${savings.toLocaleString('en-IN')}**).\n\nWould you like to switch to **${alt.name}**?`;
+
+        return res.json({
+          intent: 'Cheaper Alternative',
+          ai_message: aiMsg,
+          message: aiMsg,
+          primary_product: alt,
+          products: cheaperProds,
+          compared_products: cheaperProds,
+          bundle: null,
+          tool_calls_executed: ['search_cheaper_alternatives'],
+          action_type: 'SEARCH_RESULTS',
+          modality: currentModality,
+          follow_up: `Tell me: "Replace with ${alt.name}"`
+        });
+      } else {
+        const aiMsg = `You are already viewing the most affordable option in this category (**${reference.name}** at ₹${reference.price.toLocaleString('en-IN')}).`;
+        return res.json({
+          intent: 'Cheapest Already',
+          ai_message: aiMsg,
+          message: aiMsg,
+          primary_product: reference,
+          products: [reference],
+          compared_products: [reference],
+          bundle: null,
+          tool_calls_executed: [],
+          action_type: 'NOTICE',
+          modality: currentModality
+        });
+      }
+    }
+  }
+
+  // =========================================================================
+  // NATURAL QUESTION RULE: "WHAT CAN I GET UNDER [BUDGET]?"
+  // =========================================================================
+  const budgetInquiryMatch = msgLower.match(/^(?:what\s+can\s+i\s+(?:get|buy)|show\s+products?|items?)\s+under\s+(?:rs\.?|inr|₹)?\s*([0-9,]+)/i);
+  if (budgetInquiryMatch) {
+    const budgetVal = parseFloat(budgetInquiryMatch[1].replace(/,/g, ''));
+    const underProds = db.prepare("SELECT * FROM products WHERE price <= ? AND stock > 0 ORDER BY price ASC LIMIT 6").all(budgetVal);
+
+    if (underProds.length > 0) {
+      const lines = underProds.map(p => `• **${p.name}** (by ${p.merchant_name}) — **₹${p.price.toLocaleString('en-IN')}**`);
+      const aiMsg = `Here are options available within your **₹${budgetVal.toLocaleString('en-IN')}** budget:\n\n${lines.join('\n')}\n\nLet me know which item you'd like to explore or add!`;
+
+      return res.json({
+        intent: `Products under ₹${budgetVal}`,
+        ai_message: aiMsg,
+        message: aiMsg,
+        primary_product: underProds[0],
+        products: underProds,
+        compared_products: underProds,
+        bundle: null,
+        tool_calls_executed: ['search_products_by_budget'],
+        action_type: 'SEARCH_RESULTS',
+        modality: currentModality
+      });
+    }
+  }
+
+  // =========================================================================
+  // NATURAL QUESTION RULE: GENERAL COMMERCE & HELPER INQUIRIES
+  // e.g. "what does COD mean?", "I changed my mind", "start over"
+  // =========================================================================
+  if (/what\s+does\s+cod\s+mean|what\s+is\s+cod/i.test(msgLower)) {
+    const aiMsg = `**COD** stands for **Cash on Delivery**, where payment is made in cash when your order arrives. On Revenue Pilot AI, we also provide instant, encrypted digital checkout via **Razorpay Test Gateway**.`;
+    return res.json({
+      intent: 'General Inquiry: COD',
+      ai_message: aiMsg,
+      message: aiMsg,
+      cart: currentCart,
+      cart_items: currentCart.items,
+      primary_product: null,
+      products: [],
+      compared_products: [],
+      bundle: null,
+      tool_calls_executed: [],
+      action_type: 'NOTICE',
+      modality: currentModality
+    });
+  }
+
+  if (/^(?:i\s+changed\s+my\s+mind|start\s+over|reset)$/i.test(msgLower)) {
+    const aiMsg = `No problem! What would you like to explore instead? You can tell me an occasion, product type, or budget (e.g. *"birthday cake under ₹1,000"* or *"running shoes under ₹3,500"*).`;
+    return res.json({
+      intent: 'Reset Context',
+      ai_message: aiMsg,
+      message: aiMsg,
+      cart: currentCart,
+      cart_items: currentCart.items,
+      primary_product: null,
+      products: [],
+      compared_products: [],
+      bundle: null,
+      tool_calls_executed: [],
+      action_type: 'NOTICE',
+      modality: currentModality
+    });
+  }
+
+  // Non-Commerce Out-of-Domain Question Check
+  if (
+    /^(?:what\s+is\s+the\s+capital\s+of|who\s+is\s+the\s+president\s+of|tell\s+me\s+a\s+joke|how\s+far\s+is\s+the\s+moon)/i.test(msgLower)
+  ) {
+    let answer = 'I specialize in helping you shop, discover catalog products, customize baskets, and checkout.';
+    if (msgLower.includes('capital of france')) {
+      answer = 'The capital of France is **Paris**. As your commerce assistant, let me know what products or gift items you need!';
+    }
+    return res.json({
+      intent: 'General Question',
+      ai_message: answer,
+      message: answer,
+      cart: currentCart,
+      cart_items: currentCart.items,
+      primary_product: null,
+      products: [],
+      compared_products: [],
+      bundle: null,
+      tool_calls_executed: [],
+      action_type: 'NOTICE',
       modality: currentModality
     });
   }

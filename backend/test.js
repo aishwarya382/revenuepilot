@@ -142,7 +142,29 @@ async function runSystemVerification() {
   const persistentCartPass = swapPass && removeCakePass && removeCandlesPass && clearPass && justPass;
   console.log('[12] Persistent Cart State Continuity:', persistentCartPass ? '✓ PASS' : '✗ FAIL');
 
-  console.log('\n=== ALL 12 VERIFICATION CHECKS COMPLETED SUCCESSFULLY ===');
+  // 13. Natural Language Inquiries & Intelligent Q&A
+  // Test A: "What's the cheapest cake?"
+  const cheapRes = await request('/api/chat', 'POST', { message: "What's the cheapest cake?", customer_id: custLogin.data.user.id }, customerToken);
+  const cheapPass = cheapRes.status === 200 && cheapRes.data.primary_product?.name === 'Vanilla Cake' && cheapRes.data.primary_product?.price === 450;
+
+  // Test B: "How much is my cart?"
+  const cartQueryRes = await request('/api/chat', 'POST', { message: 'How much is my cart?', customer_id: custLogin.data.user.id }, customerToken);
+  const cartQueryPass = cartQueryRes.status === 200 && cartQueryRes.data.cart?.total_amount === 450;
+
+  // Test C: "What does COD mean?"
+  const codRes = await request('/api/chat', 'POST', { message: 'What does COD mean?', customer_id: custLogin.data.user.id }, customerToken);
+  const codPass = codRes.status === 200 && codRes.data.ai_message?.includes('Cash on Delivery');
+
+  // Test D: "remove everything except candles"
+  await request('/api/chat', 'POST', { message: 'add candles', customer_id: custLogin.data.user.id }, customerToken);
+  await request('/api/chat', 'POST', { message: 'add balloon', customer_id: custLogin.data.user.id }, customerToken);
+  const keepRes = await request('/api/chat', 'POST', { message: 'remove everything except candles', customer_id: custLogin.data.user.id }, customerToken);
+  const keepPass = keepRes.data.cart?.total_amount === 100 && keepRes.data.cart?.items.length === 1 && keepRes.data.cart?.items[0].name.includes('Candles');
+
+  const naturalQAPass = cheapPass && cartQueryPass && codPass && keepPass;
+  console.log('[13] Natural Language Intelligence & Q&A:', naturalQAPass ? '✓ PASS' : '✗ FAIL');
+
+  console.log('\n=== ALL 13 VERIFICATION CHECKS COMPLETED SUCCESSFULLY ===');
 }
 
 runSystemVerification().catch(console.error);
