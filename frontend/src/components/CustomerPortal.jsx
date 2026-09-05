@@ -223,9 +223,11 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
   // 1. VOICE SHOPPING (WEB SPEECH API - CHATGPT STYLE)
   // ==========================================
   const startListening = () => {
+    console.log('VOICE: microphone clicked');
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
+      console.warn('VOICE: error = SpeechRecognition not supported in this browser');
       showNotification("Voice input isn't supported in this browser. You can type your request instead.", 'error');
       setVoiceStatus('UNSUPPORTED');
       return;
@@ -236,6 +238,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
         try { recognitionRef.current.abort(); } catch { /* ignore */ }
       }
 
+      console.log('VOICE: permission requested');
       const recognition = new SpeechRecognition();
       // continuous = false allows the engine to naturally conclude when user stops speaking
       recognition.continuous = false;
@@ -245,6 +248,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       hasSpokenTextRef.current = false;
 
       recognition.onstart = () => {
+        console.log('VOICE: recognition started');
         setIsListening(true);
         setVoiceStatus('RECORDING');
         setAudioLevel(45);
@@ -259,6 +263,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       };
 
       recognition.onresult = (event) => {
+        console.log('VOICE: result received', event);
         let finalTranscript = '';
         let interimTranscript = '';
 
@@ -275,6 +280,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
         }
 
         const rawText = (finalTranscript + interimTranscript).trim();
+        console.log('VOICE: transcript =', rawText);
         if (rawText) {
           hasSpokenTextRef.current = true;
           const normalized = normalizeSpokenText(rawText);
@@ -283,7 +289,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       };
 
       recognition.onerror = (event) => {
-        console.warn('Speech recognition error:', event.error);
+        console.warn('VOICE: error =', event.error, event);
         setIsListening(false);
         setVoiceStatus('ERROR');
         setAudioLevel(0);
@@ -300,6 +306,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       };
 
       recognition.onend = () => {
+        console.log('VOICE: recognition ended');
         setIsListening(false);
         setVoiceStatus('IDLE');
         setAudioLevel(0);
@@ -311,7 +318,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       recognitionRef.current = recognition;
       recognition.start();
     } catch (err) {
-      console.error('Failed to start voice recognition:', err);
+      console.error('VOICE: error =', err);
       setIsListening(false);
       setVoiceStatus('ERROR');
       setAudioLevel(0);
