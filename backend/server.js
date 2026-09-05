@@ -105,19 +105,24 @@ function analyzeImageVision(imageData = '', imageName = '', queryText = '') {
     base64Header = imageData.slice(0, 100).toLowerCase();
   }
 
-  // Vision detection rules matching merchant inventory domains
-  const isShoe = /shoe|sneaker|runner|running|footwear|nike|adidas|puma|walk|athletic|trainer/i.test(combinedHints) ||
-    /image\/jpeg|image\/png|image\/webp/.test(base64Header) && /shoe|boot|sneaker|runner/i.test(combinedHints);
-
+  // Vision detection rules matching merchant inventory domains & general commerce categories
+  const isNailPolish = /nail|polish|enamel|lacquer|manicure/i.test(combinedHints);
+  const isMakeup = !isNailPolish && /makeup|cosmetic|lipstick|mascara|eyeliner|blush|foundation|eyeshadow/i.test(combinedHints);
+  const isSkincare = /skincare|cream|lotion|serum|sunscreen|moisturizer|cleanser|facewash/i.test(combinedHints);
+  const isDress = /dress|gown|frock|saree|kurti|maxi|midi/i.test(combinedHints);
+  const isPants = /pant|pants|trouser|trousers|jeans|denim|legging|shorts/i.test(combinedHints);
+  const isShirt = !isDress && /shirt|tshirt|t-shirt|hoodie|jacket|sweater|top|polo|apparel|clothing|cloth/i.test(combinedHints);
+  const isShoe = /shoe|sneaker|runner|running|footwear|boot|heel|heels|sandals|loafer|nike|adidas|puma|walk|athletic|trainer/i.test(combinedHints) ||
+    (/image\/jpeg|image\/png|image\/webp/.test(base64Header) && /shoe|boot|sneaker|runner/i.test(combinedHints));
+  const isBag = /bag|backpack|handbag|purse|tote|wallet|clutch|duffel/i.test(combinedHints);
+  const isWatch = /watch|smartwatch|timepiece/i.test(combinedHints);
+  const isJewelry = !isWatch && /jewelry|jewellery|necklace|ring|earring|earrings|bracelet|pendant/i.test(combinedHints);
+  const isTech = /laptop|macbook|computer|notebook|pc|screen|keyboard|tech|gaming|electronics|headphone|mouse|gadget/i.test(combinedHints) ||
+    (/image\/jpeg|image\/png|image\/webp/.test(base64Header) && /laptop|tech|gadget/i.test(combinedHints));
   const isCake = /cake|pastry|bakery|dessert|chocolate|sweet|birthday|cupcake|icing|frosting/i.test(combinedHints) ||
-    /image\/jpeg|image\/png|image\/webp/.test(base64Header) && /cake|dessert|bakery/i.test(combinedHints);
-
-  const isTech = /laptop|macbook|computer|notebook|pc|screen|keyboard|tech|gaming|electronics/i.test(combinedHints) ||
-    /image\/jpeg|image\/png|image\/webp/.test(base64Header) && /laptop|tech|gadget/i.test(combinedHints);
-
-  const isClothing = /shirt|tshirt|hoodie|jacket|dress|pant|saree|wear|cloth|apparel/i.test(combinedHints);
-
-  const isParty = /candle|balloon|decoration|sparkler|party|gift/i.test(combinedHints);
+    (/image\/jpeg|image\/png|image\/webp/.test(base64Header) && /cake|dessert|bakery/i.test(combinedHints));
+  const isFurniture = /furniture|chair|table|desk|sofa|couch|lamp|decor/i.test(combinedHints);
+  const isParty = /candle|balloon|decoration|sparkler|party|gift|banner/i.test(combinedHints);
 
   // Extract color cues
   let detectedColor = 'Classic Tone';
@@ -126,22 +131,145 @@ function analyzeImageVision(imageData = '', imageName = '', queryText = '') {
   else if (/red|crimson|ruby/i.test(combinedHints)) detectedColor = 'Red';
   else if (/blue|navy|cyan/i.test(combinedHints)) detectedColor = 'Navy / Blue';
   else if (/chocolate|brown|cocoa/i.test(combinedHints)) detectedColor = 'Chocolate / Dark Brown';
-  else if (/gold|yellow|strawberry|pink/i.test(combinedHints)) detectedColor = 'Pink / Pastel';
+  else if (/gold|yellow/i.test(combinedHints)) detectedColor = 'Gold / Yellow';
+  else if (/pink|pastel|rose|strawberry/i.test(combinedHints)) detectedColor = 'Pastel Pink';
+  else if (/green|olive|emerald/i.test(combinedHints)) detectedColor = 'Green';
+  else if (/purple|violet|lavender/i.test(combinedHints)) detectedColor = 'Purple';
 
   let visualAttributes = null;
 
-  if (isShoe || (!isCake && !isTech && !isClothing && !isParty && (combinedHints.includes('run') || combinedHints.includes('walk') || combinedHints.includes('sport')))) {
+  if (isNailPolish) {
+    const isMatte = /matte/i.test(combinedHints);
+    const isGlitter = /glitter|sparkle|shimmer/i.test(combinedHints);
+    const finish = isMatte ? 'Matte finish' : (isGlitter ? 'Glitter shimmer finish' : 'High-gloss salon finish');
+    visualAttributes = {
+      category: 'Nail Polish',
+      product_type: `${detectedColor} Nail Polish`,
+      color: detectedColor,
+      style: 'Cosmetic Nail Care',
+      features: `${finish}, precision brush bottle`,
+      search_terms: ['nail polish', 'nail', 'cosmetic', detectedColor.toLowerCase()].filter(Boolean),
+      explanation: [
+        `${detectedColor} Nail Polish`,
+        finish,
+        'Precision applicator bottle'
+      ]
+    };
+  } else if (isMakeup) {
+    visualAttributes = {
+      category: 'Makeup',
+      product_type: `${detectedColor} Beauty Product`,
+      color: detectedColor,
+      style: 'Cosmetics & Beauty',
+      features: 'Pigmented formula & smooth application',
+      search_terms: ['makeup', 'cosmetic', detectedColor.toLowerCase()].filter(Boolean),
+      explanation: [
+        `${detectedColor} Beauty Product`,
+        'Cosmetics & Beauty',
+        'Daily wear formula'
+      ]
+    };
+  } else if (isSkincare) {
+    visualAttributes = {
+      category: 'Skincare',
+      product_type: 'Personal Skincare Item',
+      color: detectedColor,
+      style: 'Dermatological Care',
+      features: 'Hydrating & nourishing formula',
+      search_terms: ['skincare', 'cream', 'serum', 'lotion'].filter(Boolean),
+      explanation: [
+        'Personal Skincare Item',
+        'Dermatological Care',
+        'Hydrating formula'
+      ]
+    };
+  } else if (isDress) {
+    const hasZip = /zip|zipper/i.test(combinedHints);
+    const hasButton = /button/i.test(combinedHints);
+    const fastening = hasZip ? 'Back zip closure' : (hasButton ? 'Button fastening' : 'Fitted silhouette');
+    visualAttributes = {
+      category: 'Dress',
+      product_type: `${detectedColor} Fashion Dress`,
+      color: detectedColor,
+      style: 'Elegant / Party Silhouette',
+      features: `${fastening}, premium drape fabric`,
+      search_terms: ['dress', 'gown', detectedColor.toLowerCase()].filter(Boolean),
+      explanation: [
+        `${detectedColor} Fashion Dress`,
+        fastening,
+        'Elegant party silhouette'
+      ]
+    };
+  } else if (isPants) {
+    visualAttributes = {
+      category: 'Pants',
+      product_type: `${detectedColor} Trousers / Pants`,
+      color: detectedColor,
+      style: 'Tailored Fit',
+      features: 'Durable weave & comfortable waistband',
+      search_terms: ['pants', 'trouser', 'jeans', detectedColor.toLowerCase()].filter(Boolean),
+      explanation: [
+        `${detectedColor} Trousers / Pants`,
+        'Tailored Fit',
+        'Casual & everyday wear'
+      ]
+    };
+  } else if (isShoe || (!isCake && !isTech && !isShirt && !isParty && (combinedHints.includes('run') || combinedHints.includes('walk') || combinedHints.includes('sport')))) {
+    const hasHeel = /heel|heels|high heel/i.test(combinedHints);
+    const shoeType = hasHeel ? `${detectedColor} Heeled Footwear` : `${detectedColor} Running Shoes`;
     visualAttributes = {
       category: 'Footwear',
-      product_type: `${detectedColor} Running Shoes`,
+      product_type: shoeType,
       color: detectedColor,
-      style: 'Sport style',
-      features: 'Everyday running & athletic cushioning',
+      style: hasHeel ? 'Elevated Heel Style' : 'Sport style',
+      features: hasHeel ? 'Sturdy heel with cushioned insole' : 'Everyday running & athletic cushioning',
       search_terms: ['running', 'shoes', detectedColor.toLowerCase(), 'runner', 'footwear'].filter(Boolean),
       explanation: [
-        `${detectedColor} running shoes`,
-        'Sport style',
-        'Everyday running'
+        shoeType,
+        hasHeel ? 'Elevated Heel Style' : 'Sport style',
+        hasHeel ? 'Party & formal wear' : 'Everyday running'
+      ]
+    };
+  } else if (isBag) {
+    visualAttributes = {
+      category: 'Bags & Accessories',
+      product_type: `${detectedColor} Bag`,
+      color: detectedColor,
+      style: 'Everyday Carry',
+      features: 'Spacious compartments & reinforced stitching',
+      search_terms: ['bag', 'backpack', detectedColor.toLowerCase()].filter(Boolean),
+      explanation: [
+        `${detectedColor} Bag`,
+        'Everyday Carry',
+        'Functional storage'
+      ]
+    };
+  } else if (isWatch) {
+    visualAttributes = {
+      category: 'Watches',
+      product_type: `${detectedColor} Timepiece`,
+      color: detectedColor,
+      style: 'Classic Precision',
+      features: 'Precision dial & durable strap',
+      search_terms: ['watch', 'smartwatch', detectedColor.toLowerCase()].filter(Boolean),
+      explanation: [
+        `${detectedColor} Timepiece`,
+        'Classic Precision',
+        'Dial & strap detailing'
+      ]
+    };
+  } else if (isJewelry) {
+    visualAttributes = {
+      category: 'Jewelry',
+      product_type: `${detectedColor} Fine Jewelry`,
+      color: detectedColor,
+      style: 'Elegant Craftsmanship',
+      features: 'Polished metal & gemstone setting',
+      search_terms: ['jewelry', 'jewellery', detectedColor.toLowerCase()].filter(Boolean),
+      explanation: [
+        `${detectedColor} Fine Jewelry`,
+        'Elegant Craftsmanship',
+        'Polished setting'
       ]
     };
   } else if (isCake) {
@@ -172,7 +300,7 @@ function analyzeImageVision(imageData = '', imageName = '', queryText = '') {
         'Work & developer setup'
       ]
     };
-  } else if (isClothing) {
+  } else if (isShirt) {
     visualAttributes = {
       category: 'Clothing',
       product_type: `${detectedColor} Apparel`,
@@ -184,6 +312,20 @@ function analyzeImageVision(imageData = '', imageName = '', queryText = '') {
         `${detectedColor} Apparel`,
         'Modern Fit',
         'Casual & everyday wear'
+      ]
+    };
+  } else if (isFurniture) {
+    visualAttributes = {
+      category: 'Furniture',
+      product_type: `${detectedColor} Furniture Item`,
+      color: detectedColor,
+      style: 'Contemporary Living',
+      features: 'Ergonomic build & quality finish',
+      search_terms: ['furniture', 'chair', 'table'].filter(Boolean),
+      explanation: [
+        `${detectedColor} Furniture Item`,
+        'Contemporary Living',
+        'Interior decor'
       ]
     };
   } else if (isParty) {
@@ -430,14 +572,22 @@ async function handleAIChat(req, res) {
 
   const session = getCustomerSession(customerId);
 
-  if (Array.isArray(last_products) && last_products.length > 0) {
-    session.last_search_results = last_products;
-  }
-  if (last_bundle) {
-    session.last_suggested_bundle = last_bundle;
-  }
-  if (last_selected_product_id) {
-    session.last_selected_product_id = last_selected_product_id;
+  if (hasImage) {
+    // CRITICAL IMAGE RULE: New uploaded image overrides old category/bundle context completely
+    session.last_search_results = [];
+    session.last_suggested_bundle = null;
+    session.last_selected_product = null;
+    session.last_selected_product_id = null;
+  } else {
+    if (Array.isArray(last_products) && last_products.length > 0) {
+      session.last_search_results = last_products;
+    }
+    if (last_bundle) {
+      session.last_suggested_bundle = last_bundle;
+    }
+    if (last_selected_product_id) {
+      session.last_selected_product_id = last_selected_product_id;
+    }
   }
 
   // Determine interaction modality
@@ -1374,21 +1524,24 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
   const primary = merchantResults[0];
   let calculatedBundle = null;
 
-  // AI Basket Growth Agent (Strictly Bounded by Customer Budget if provided)
-  toolCalls.push('search_complementary_products');
-  const complementary = AgentTools.search_complementary_products({
-    mainProduct: primary,
-    occasion: intent.occasion || (intent.isBirthday ? 'birthday' : null),
-    max_budget: intent.maxPrice ? (intent.maxPrice - primary.price) : null
-  });
-
-  if (complementary.length > 0) {
-    toolCalls.push('calculate_bundle');
-    calculatedBundle = AgentTools.calculate_bundle({
+  // AI Basket Growth Agent (Only propose automatic complementary bundles if explicitly requested or on text discovery)
+  const isExplicitBundleRequest = /bundle|package|setup|complementary|matching items/i.test(userMessage);
+  if (!hasImage || isExplicitBundleRequest) {
+    toolCalls.push('search_complementary_products');
+    const complementary = AgentTools.search_complementary_products({
       mainProduct: primary,
-      complementaryItems: complementary,
-      budget_limit: intent.maxPrice
+      occasion: intent.occasion || (intent.isBirthday ? 'birthday' : null),
+      max_budget: intent.maxPrice ? (intent.maxPrice - primary.price) : null
     });
+
+    if (complementary.length > 0 && (isExplicitBundleRequest || intent.isBirthday || !hasImage)) {
+      toolCalls.push('calculate_bundle');
+      calculatedBundle = AgentTools.calculate_bundle({
+        mainProduct: primary,
+        complementaryItems: complementary,
+        budget_limit: intent.maxPrice
+      });
+    }
   }
 
   session.last_search_results = merchantResults;
@@ -1418,7 +1571,7 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
 
   if (hasImage && visualAttributes) {
     const visualBullets = visualAttributes.explanation.map(e => `• **${e}**`).join('\n');
-    aiMsg = `I think you're looking for:\n${visualBullets}\n\nHere are the closest matches from this store:`;
+    aiMsg = `I found this based on your image:\n${visualBullets}\n\nHere are matching products from our verified catalog:`;
   } else if (calculatedBundle && calculatedBundle.complementary_items.length > 0) {
     const compNames = calculatedBundle.complementary_items.map(i => `${i.name} (₹${i.price})`).join(' and ');
     const remText = calculatedBundle.remaining_budget !== null && calculatedBundle.remaining_budget > 0
