@@ -116,7 +116,7 @@ db.exec(`
 try { db.exec("ALTER TABLE users ADD COLUMN merchant_id TEXT"); } catch (_) { }
 try { db.exec("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1"); } catch (_) { }
 
-const { hashPassword } = require('./auth_node');
+const { hashPassword } = require('./auth');
 const demoPasswordHash = hashPassword('Demo@12345');
 
 // Sync Seed Users with exact merchant_id bindings and hashed passwords

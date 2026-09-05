@@ -3,7 +3,7 @@ const cors = require('cors');
 const Razorpay = require('razorpay');
 const { db, logAudit } = require('./db');
 const { AgentTools } = require('./agentTools');
-const { hashPassword, verifyPassword, createAccessToken, verifyAccessToken } = require('./auth_node');
+const { hashPassword, verifyPassword, createAccessToken, verifyAccessToken } = require('./auth');
 
 const app = express();
 app.use(cors());
