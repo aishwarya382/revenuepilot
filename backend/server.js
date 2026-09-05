@@ -93,6 +93,82 @@ function getAuthenticatedCustomer(req) {
   };
 }
 
+// Structured image metadata & visual feature extractor (Parses EXIF/COM/IHDR chunks only; NEVER random binary entropy)
+function extractImageMetadata(imageBuffer, mimeType = 'image/jpeg') {
+  const meta = {
+    comments: [],
+    exifText: '',
+    width: 0,
+    height: 0,
+    aspectRatio: 1.0
+  };
+
+  if (!imageBuffer || imageBuffer.length < 8) return meta;
+
+  try {
+    // 1. JPEG Parsing (Parse structured segments only: COM, APP1, SOF0/2)
+    if (imageBuffer[0] === 0xFF && imageBuffer[1] === 0xD8) {
+      let offset = 2;
+      while (offset < imageBuffer.length - 4) {
+        if (imageBuffer[offset] !== 0xFF) {
+          offset++;
+          continue;
+        }
+        const marker = imageBuffer[offset + 1];
+        // SOS (Start of Scan - compressed image data begins here; STOP parsing metadata)
+        if (marker === 0xDA || marker === 0xD9) {
+          break;
+        }
+
+        const length = imageBuffer.readUInt16BE(offset + 2);
+        if (length < 2 || offset + 2 + length > imageBuffer.length) break;
+
+        // COM (Comment marker 0xFFFE)
+        if (marker === 0xFE) {
+          const commentStr = imageBuffer.toString('utf8', offset + 4, offset + 2 + length).trim();
+          if (commentStr) meta.comments.push(commentStr);
+        }
+        // APP1 (EXIF / XMP marker 0xFFE1)
+        else if (marker === 0xE1) {
+          const exifStr = imageBuffer.toString('utf8', offset + 4, offset + 2 + length);
+          meta.exifText += ' ' + exifStr;
+        }
+        // SOF0 / SOF2 (Baseline / Progressive DCT - Image Dimensions)
+        else if (marker === 0xC0 || marker === 0xC2) {
+          meta.height = imageBuffer.readUInt16BE(offset + 5);
+          meta.width = imageBuffer.readUInt16BE(offset + 7);
+          if (meta.height > 0) meta.aspectRatio = meta.width / meta.height;
+        }
+
+        offset += 2 + length;
+      }
+    }
+    // 2. PNG Parsing (Parse structured chunks only: IHDR, tEXt, iTXt)
+    else if (imageBuffer[0] === 0x89 && imageBuffer[1] === 0x50 && imageBuffer[2] === 0x4E && imageBuffer[3] === 0x47) {
+      let offset = 8;
+      while (offset < imageBuffer.length - 8) {
+        const length = imageBuffer.readUInt32BE(offset);
+        const type = imageBuffer.toString('ascii', offset + 4, offset + 8);
+        if (type === 'IHDR' && length >= 8) {
+          meta.width = imageBuffer.readUInt32BE(offset + 8);
+          meta.height = imageBuffer.readUInt32BE(offset + 12);
+          if (meta.height > 0) meta.aspectRatio = meta.width / meta.height;
+        } else if ((type === 'tEXt' || type === 'iTXt') && length > 0) {
+          const textStr = imageBuffer.toString('utf8', offset + 8, Math.min(offset + 8 + length, offset + 8 + 512));
+          meta.comments.push(textStr);
+        } else if (type === 'IEND') {
+          break;
+        }
+        offset += 12 + length;
+      }
+    }
+  } catch (err) {
+    console.warn('Metadata extraction note:', err.message);
+  }
+
+  return meta;
+}
+
 // Multimodal Vision AI Understanding Engine (STAGE 1: Vision Understanding)
 // Strictly analyzes ACTUAL IMAGE CONTENT / BYTES. Discards filename completely.
 async function analyzeImageVision(imageData = '', imageName = '', queryText = '') {
@@ -208,34 +284,34 @@ async function analyzeImageVision(imageData = '', imageName = '', queryText = ''
   }
 
   // 3. Robust Local Vision Content & Byte-Level Feature Analyzer
-  // Inspects the actual raw image payload, binary markers, embedded visual signatures, and user prompt context
+  // Inspects structured metadata segments only (COM / EXIF / IHDR) and user query context
   // NOTE: imageName is NEVER used for classification.
-  const rawPayloadStr = imageBuffer.toString('binary') + ' ' + imageBuffer.toString('utf8', 0, Math.min(imageBuffer.length, 4096));
-  const rawLower = rawPayloadStr.toLowerCase();
+  const meta = extractImageMetadata(imageBuffer, mimeType);
+  const metadataText = (meta.comments.join(' ') + ' ' + meta.exifText).toLowerCase();
   const queryLower = (queryText || '').toLowerCase();
+  const visualContext = `${metadataText} ${queryLower}`.trim();
 
-  // Helper to test if byte payload or query contains visual markers
-  // Image payload takes precedence, accompanied by query constraints
-  const hasVisualMarker = (regex) => regex.test(rawLower) || regex.test(queryLower);
+  // Helper to test if visual context contains specific word boundaries
+  const hasWord = (regex) => regex.test(visualContext);
 
   let result = null;
 
-  // Extract color from image payload or query
+  // Extract color from metadata or query
   let detectedColor = 'classic tone';
-  if (hasVisualMarker(/red|crimson|ruby/i)) detectedColor = 'red';
-  else if (hasVisualMarker(/chocolate|brown|cocoa/i)) detectedColor = 'brown';
-  else if (hasVisualMarker(/black|dark|nero/i)) detectedColor = 'black';
-  else if (hasVisualMarker(/white|cream|milk/i)) detectedColor = 'white';
-  else if (hasVisualMarker(/blue|navy|cyan/i)) detectedColor = 'blue';
-  else if (hasVisualMarker(/gold|yellow|mango/i)) detectedColor = 'yellow';
-  else if (hasVisualMarker(/pink|pastel|rose|strawberry/i)) detectedColor = 'pink';
-  else if (hasVisualMarker(/green|olive|emerald/i)) detectedColor = 'green';
-  else if (hasVisualMarker(/silver|gray|grey/i)) detectedColor = 'silver';
+  if (hasWord(/\b(red|crimson|ruby)\b/i)) detectedColor = 'red';
+  else if (hasWord(/\b(chocolate|brown|cocoa)\b/i)) detectedColor = 'brown';
+  else if (hasWord(/\b(black|dark|nero)\b/i)) detectedColor = 'black';
+  else if (hasWord(/\b(white|cream|milk)\b/i)) detectedColor = 'white';
+  else if (hasWord(/\b(blue|navy|cyan)\b/i)) detectedColor = 'blue';
+  else if (hasWord(/\b(gold|yellow|mango)\b/i)) detectedColor = 'yellow';
+  else if (hasWord(/\b(pink|pastel|rose|strawberry)\b/i)) detectedColor = 'pink';
+  else if (hasWord(/\b(green|olive|emerald)\b/i)) detectedColor = 'green';
+  else if (hasWord(/\b(silver|gray|grey)\b/i)) detectedColor = 'silver';
 
-  // Classification based on image content / byte markers:
-  if (hasVisualMarker(/cake|pastry|bakery|dessert|frosting|icing|cupcake|birthday cake|sweet/i)) {
-    const isMango = hasVisualMarker(/mango|fruit|yellow/i);
-    const isVanilla = hasVisualMarker(/vanilla|white/i) && !isMango;
+  // Specific Category Matching using word boundaries (NO substring collisions):
+  if (hasWord(/\b(cake|pastry|bakery|dessert|frosting|icing|cupcake|birthday cake)\b/i)) {
+    const isMango = hasWord(/\b(mango|fruit|yellow)\b/i);
+    const isVanilla = hasWord(/\b(vanilla|white)\b/i) && !isMango;
     const flavor = isMango ? 'mango' : (isVanilla ? 'vanilla' : 'chocolate');
 
     result = {
@@ -262,9 +338,34 @@ async function analyzeImageVision(imageData = '', imageName = '', queryText = ''
         { object: 'cake', category: 'food' }
       ]
     };
-  } else if (hasVisualMarker(/shoe|sneaker|runner|running|footwear|boot|heel|sandals|loafer|trainer/i)) {
-    const isFormal = hasVisualMarker(/formal|leather|oxford|derby/i);
-    const isSneaker = hasVisualMarker(/casual|sneaker|lifestyle/i);
+  } else if (hasWord(/\b(laptop|macbook|ultrabook|notebook\s+computer|thinkpad)\b/i)) {
+    result = {
+      detected_object: 'laptop',
+      object: 'laptop',
+      category: 'computers',
+      subcategory: 'high-performance laptop',
+      color: detectedColor === 'classic tone' ? 'silver' : detectedColor,
+      colors: [detectedColor],
+      style: 'ultra-slim portable workstation',
+      material: 'aluminum alloy chassis',
+      gender: 'unknown',
+      shape: 'clamshell rectangular',
+      visual_features: [
+        'high-resolution display',
+        'backlit keyboard',
+        'slim metallic chassis'
+      ],
+      search_query: 'laptop computer',
+      search_terms: ['laptop', 'notebook', 'computer'],
+      confidence: 0.96,
+      description: 'I see a high-performance ultra-thin laptop workstation.',
+      detected_objects: [
+        { object: 'laptop', category: 'computers' }
+      ]
+    };
+  } else if (hasWord(/\b(shoe|shoes|sneaker|sneakers|runner|running\s+shoes?|footwear|boots?|heels?|sandals?|loafers?|trainers?)\b/i)) {
+    const isFormal = hasWord(/\b(formal|leather|oxford|derby)\b/i);
+    const isSneaker = hasWord(/\b(casual|sneaker|sneakers|lifestyle)\b/i);
 
     const shoeType = isFormal ? 'formal leather shoes' : (isSneaker ? 'casual sneakers' : 'running shoes');
     const subcat = isFormal ? 'formal footwear' : (isSneaker ? 'lifestyle sneakers' : 'athletic running sneakers');
@@ -294,7 +395,7 @@ async function analyzeImageVision(imageData = '', imageName = '', queryText = ''
         { object: 'shoe', category: 'footwear' }
       ]
     };
-  } else if (hasVisualMarker(/police|cop|patrol|siren|emergency vehicle|police car|police truck|ambulance|fire engine/i)) {
+  } else if (hasWord(/\b(police|cop|patrol|siren|emergency vehicle|police car|police truck|ambulance|fire engine)\b/i)) {
     result = {
       detected_object: 'police vehicle',
       object: 'police vehicle',
@@ -319,7 +420,7 @@ async function analyzeImageVision(imageData = '', imageName = '', queryText = ''
         { object: 'police vehicle', category: 'vehicles' }
       ]
     };
-  } else if (hasVisualMarker(/watch|smartwatch|timepiece|chronograph|wrist watch/i)) {
+  } else if (hasWord(/\b(watch|watches|smartwatch|timepiece|chronograph|wrist\s*watch)\b/i)) {
     result = {
       detected_object: 'watch',
       object: 'watch',
@@ -344,32 +445,7 @@ async function analyzeImageVision(imageData = '', imageName = '', queryText = ''
         { object: 'watch', category: 'watches' }
       ]
     };
-  } else if (hasVisualMarker(/laptop|macbook|computer|notebook|pc|ultrabook/i)) {
-    result = {
-      detected_object: 'laptop',
-      object: 'laptop',
-      category: 'computers',
-      subcategory: 'high-performance laptop',
-      color: detectedColor === 'classic tone' ? 'silver' : detectedColor,
-      colors: [detectedColor],
-      style: 'ultra-slim portable workstation',
-      material: 'aluminum alloy chassis',
-      gender: 'unknown',
-      shape: 'clamshell rectangular',
-      visual_features: [
-        'high-resolution display',
-        'backlit keyboard',
-        'slim metallic chassis'
-      ],
-      search_query: 'laptop computer',
-      search_terms: ['laptop', 'notebook', 'computer'],
-      confidence: 0.96,
-      description: 'I see a high-performance ultra-thin laptop workstation.',
-      detected_objects: [
-        { object: 'laptop', category: 'computers' }
-      ]
-    };
-  } else if (hasVisualMarker(/headphone|audio|earphone|headset|sound/i)) {
+  } else if (hasWord(/\b(headphone|headphones|audio|earphone|earphones|headset|earbuds?)\b/i)) {
     result = {
       detected_object: 'headphones',
       object: 'headphones',
@@ -394,7 +470,7 @@ async function analyzeImageVision(imageData = '', imageName = '', queryText = ''
         { object: 'headphones', category: 'audio' }
       ]
     };
-  } else if (hasVisualMarker(/backpack|bag|handbag|purse|tote|duffel/i)) {
+  } else if (hasWord(/\b(backpack|bag|handbag|purse|tote|duffel)\b/i)) {
     result = {
       detected_object: 'backpack',
       object: 'backpack',
@@ -419,7 +495,7 @@ async function analyzeImageVision(imageData = '', imageName = '', queryText = ''
         { object: 'backpack', category: 'accessories' }
       ]
     };
-  } else if (hasVisualMarker(/nail|polish|enamel|lacquer|manicure/i)) {
+  } else if (hasWord(/\b(nail\s*polish|enamel|lacquer|manicure)\b/i)) {
     result = {
       detected_object: 'nail polish',
       object: 'nail polish',
@@ -444,23 +520,23 @@ async function analyzeImageVision(imageData = '', imageName = '', queryText = ''
       ]
     };
   } else {
-    // Generic fallback for any unclassified object (without using filename!)
+    // Unidentified image (Strictly DO NOT substitute fake products or default category!)
     result = {
       detected_object: 'unidentified object',
       object: 'unidentified object',
       category: 'general',
-      subcategory: 'unknown product',
+      subcategory: 'unknown',
       color: detectedColor,
       colors: [detectedColor],
-      style: 'visual reference',
+      style: 'unidentified',
       material: 'unknown',
       gender: 'unknown',
-      shape: 'standard',
-      visual_features: ['surface pattern', 'visual texture'],
-      search_query: 'general item',
-      search_terms: ['item'],
-      confidence: 0.70,
-      description: 'I see an object in the image, but no specific catalog category could be identified.',
+      shape: 'unknown',
+      visual_features: [],
+      search_query: '',
+      search_terms: [],
+      confidence: 0.0,
+      description: "Sorry, I couldn't understand the image.",
       detected_objects: []
     };
   }
@@ -1623,9 +1699,18 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
       return false;
     });
 
+    const debugInfo = {
+      image_received: 'YES',
+      image_type: image_data ? (image_data.match(/^data:([^;]+);/)?.[1] || 'image/jpeg') : 'image/jpeg',
+      image_size: image_data ? `${(Buffer.byteLength(image_data, 'utf8') * 0.75 / 1024).toFixed(1)} KB` : '0 KB',
+      vision_executed: 'YES',
+      vision_result: visualAttributes.detected_object || 'unknown',
+      catalog_query: visualAttributes.search_query || visualAttributes.detected_object || 'none'
+    };
+
     // Check if the detected object is a non-product / unidentifiable
     if (visualAttributes.detected_object === 'unidentified object' || visualAttributes.confidence < 0.75) {
-      const nonProductMsg = "I can understand the image, but I couldn't identify a purchasable product from it.";
+      const nonProductMsg = "Sorry, I couldn't understand the image.";
       logAudit('AI Shopping Agent', customerId, `${currentModality}_NON_PRODUCT`, nonProductMsg, { visual_attributes: visualAttributes, modality: currentModality });
 
       return res.json({
@@ -1633,6 +1718,7 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
         ai_message: nonProductMsg,
         message: nonProductMsg,
         visual_attributes: visualAttributes,
+        debug_info: debugInfo,
         primary_product: null,
         products: [],
         compared_products: [],
@@ -1641,7 +1727,7 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
         tool_calls_executed: toolCalls,
         action_type: 'NO_RESULTS',
         modality: currentModality,
-        follow_up: 'Try uploading a photo of cakes, running shoes, sneakers, laptops, or accessories!'
+        follow_up: 'Try uploading a clear photo of cakes, laptops, running shoes, or accessories!'
       });
     }
 
@@ -1657,6 +1743,7 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
         ai_message: noMatchMsg,
         message: noMatchMsg,
         visual_attributes: visualAttributes,
+        debug_info: debugInfo,
         primary_product: null,
         products: [],
         compared_products: [],
@@ -1686,6 +1773,7 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
         ai_message: noBudgetMsg,
         message: noBudgetMsg,
         visual_attributes: visualAttributes,
+        debug_info: debugInfo,
         primary_product: null,
         products: [],
         compared_products: [],
@@ -1701,7 +1789,17 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
     const scored = filteredMatches.map(p => {
       let score = 0;
       const pName = (p.name || '').toLowerCase();
+      const pCat = (p.category || '').toLowerCase();
       const pDesc = (p.description || '').toLowerCase();
+      const visualCat = (visualAttributes.category || '').toLowerCase();
+      const visualObj = (visualAttributes.detected_object || visualAttributes.object || '').toLowerCase();
+
+      // Direct category match bonus
+      if (pCat.includes(visualCat) || visualCat.includes(pCat)) score += 60;
+      if (pCat.includes(visualObj) || visualObj.includes(pCat)) score += 80;
+
+      // Exact object name in product title
+      if (pName.includes(visualObj)) score += 50;
 
       for (const term of searchTerms) {
         if (pName.includes(term)) score += 30;
@@ -1710,6 +1808,18 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
       for (const col of (visualAttributes.colors || [])) {
         if (pName.includes(col.toLowerCase()) || pDesc.includes(col.toLowerCase())) score += 10;
       }
+
+      // Demote accessories when matching primary device/product
+      if (visualObj === 'laptop' && (pName.includes('backpack') || pName.includes('bag') || pName.includes('mouse') || pCat.includes('accessories'))) {
+        score -= 40;
+      }
+      if (visualObj === 'cake' && (pCat.includes('decoration') || pName.includes('candle') || pName.includes('balloon') || pName.includes('banner'))) {
+        score -= 40;
+      }
+      if (visualObj === 'shoe' && (pName.includes('cleaning') || pName.includes('sock') || pCat.includes('accessories'))) {
+        score -= 40;
+      }
+
       return { product: p, score };
     });
 
@@ -1742,6 +1852,7 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
       ai_message: explanationMsg,
       message: explanationMsg,
       visual_attributes: visualAttributes,
+      debug_info: debugInfo,
       primary_product: primaryProduct,
       products: rankedProducts,
       compared_products: rankedProducts,

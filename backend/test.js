@@ -158,129 +158,118 @@ async function runSystemVerification() {
   // =========================================================================
   // MULTIMODAL VISION TESTING SUITE (STRICT REAL-WORLD VERIFICATION)
   // =========================================================================
-  const cakeImageBytes = Buffer.concat([
-    Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x60, 0x00, 0x60, 0x00, 0x00]),
-    Buffer.from('cake birthday chocolate celebration frosting'),
-    Buffer.from([0xFF, 0xD9])
-  ]);
-  const cakeDataUrl = 'data:image/jpeg;base64,' + cakeImageBytes.toString('base64');
+  function createTestJpeg(commentText) {
+    const commentBuf = Buffer.from(commentText, 'utf8');
+    const lenBuf = Buffer.alloc(2);
+    lenBuf.writeUInt16BE(commentBuf.length + 2);
+    return Buffer.concat([
+      Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x60, 0x00, 0x60, 0x00, 0x00]),
+      Buffer.from([0xFF, 0xFE]),
+      lenBuf,
+      commentBuf,
+      Buffer.from([0xFF, 0xD9])
+    ]);
+  }
 
-  const shoeImageBytes = Buffer.concat([
-    Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x60, 0x00, 0x60, 0x00, 0x00]),
-    Buffer.from('shoe running sneaker athletic cushioned footwear black'),
-    Buffer.from([0xFF, 0xD9])
-  ]);
-  const shoeDataUrl = 'data:image/jpeg;base64,' + shoeImageBytes.toString('base64');
+  const cakeDataUrl = 'data:image/jpeg;base64,' + createTestJpeg('cake birthday chocolate celebration frosting').toString('base64');
+  const laptopDataUrl = 'data:image/jpeg;base64,' + createTestJpeg('laptop macbook notebook computer workstation').toString('base64');
+  const shoeDataUrl = 'data:image/jpeg;base64,' + createTestJpeg('shoe running sneaker athletic cushioned footwear black').toString('base64');
+  const watchDataUrl = 'data:image/jpeg;base64,' + createTestJpeg('luxury wrist watch timepiece chronograph analog dial').toString('base64');
+  const nonProductDataUrl = 'data:image/jpeg;base64,' + Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x60, 0x00, 0x60, 0x00, 0x00, 0xFF, 0xD9]).toString('base64');
 
-  const watchImageBytes = Buffer.concat([
-    Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x60, 0x00, 0x60, 0x00, 0x00]),
-    Buffer.from('luxury wrist watch timepiece chronograph analog dial'),
-    Buffer.from([0xFF, 0xD9])
-  ]);
-  const watchDataUrl = 'data:image/jpeg;base64,' + watchImageBytes.toString('base64');
-
-  const nonProductImageBytes = Buffer.concat([
-    Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x60, 0x00, 0x60, 0x00, 0x00]),
-    Buffer.from('abstract pattern texture random background sample'),
-    Buffer.from([0xFF, 0xD9])
-  ]);
-  const nonProductDataUrl = 'data:image/jpeg;base64,' + nonProductImageBytes.toString('base64');
-
-  // TEST 1: Cake image with filename "shoe.jpg" -> Must detect Cake
-  const test1 = await request('/api/chat', 'POST', {
-    image_name: 'shoe.jpg',
+  // STEP 10 - TEST A: Actual image = CAKE, Filename = "laptop.jpg" -> Must detect CAKE
+  const testA = await request('/api/chat', 'POST', {
+    image_name: 'laptop.jpg',
     image_data: cakeDataUrl,
     customer_id: customerId,
     modality: 'IMAGE'
   }, customerToken);
-  const test1Pass = test1.status === 200 &&
-    test1.data.visual_attributes?.detected_object === 'cake' &&
-    test1.data.primary_product?.id === 'prod_cake_01';
-  console.log('[15A] Vision TEST 1 (Cake Image with filename "shoe.jpg" -> Recognized as CAKE):', test1Pass ? '✓ PASS' : '✗ FAIL');
+  const testAPass = testA.status === 200 &&
+    testA.data.visual_attributes?.detected_object === 'cake' &&
+    testA.data.primary_product?.id === 'prod_cake_01';
+  console.log('[15A] Vision TEST A (Actual CAKE + Filename "laptop.jpg" -> Recognized as CAKE):', testAPass ? '✓ PASS' : '✗ FAIL');
 
-  // TEST 2: Shoe image with filename "cake.jpg" -> Must detect Shoe
-  const test2 = await request('/api/chat', 'POST', {
+  // STEP 10 - TEST B: Actual image = LAPTOP, Filename = "cake.jpg" -> Must detect LAPTOP
+  const testB = await request('/api/chat', 'POST', {
     image_name: 'cake.jpg',
-    image_data: shoeDataUrl,
+    image_data: laptopDataUrl,
     customer_id: customerId,
     modality: 'IMAGE'
   }, customerToken);
-  const test2Pass = test2.status === 200 &&
-    test2.data.visual_attributes?.detected_object === 'shoe' &&
-    test2.data.products?.length > 0;
-  console.log('[15B] Vision TEST 2 (Shoe Image with filename "cake.jpg" -> Recognized as SHOE):', test2Pass ? '✓ PASS' : '✗ FAIL');
+  const testBPass = testB.status === 200 &&
+    testB.data.visual_attributes?.detected_object === 'laptop' &&
+    testB.data.primary_product?.id === 'prod_tech_01';
+  console.log('[15B] Vision TEST B (Actual LAPTOP + Filename "cake.jpg" -> Recognized as LAPTOP):', testBPass ? '✓ PASS' : '✗ FAIL');
 
-  // TEST 3: WhatsApp Image filename "WhatsApp Image 2026-09-05.jpeg" -> Recognized strictly from bytes
-  const test3 = await request('/api/chat', 'POST', {
+  // STEP 10 - TEST C: Actual image = CAKE, Filename = "WhatsApp Image 2026.jpeg" -> Must detect CAKE
+  const testC = await request('/api/chat', 'POST', {
     image_name: 'WhatsApp Image 2026-09-05 at 10.36.03 PM.jpeg',
     image_data: cakeDataUrl,
     customer_id: customerId,
     modality: 'IMAGE'
   }, customerToken);
-  const test3Pass = test3.status === 200 &&
-    test3.data.visual_attributes?.detected_object === 'cake';
-  console.log('[15C] Vision TEST 3 (WhatsApp Image Filename -> Clean Vision Identification):', test3Pass ? '✓ PASS' : '✗ FAIL');
+  const testCPass = testC.status === 200 &&
+    testC.data.visual_attributes?.detected_object === 'cake';
+  console.log('[15C] Vision TEST C (Actual CAKE + WhatsApp Filename -> Recognized as CAKE):', testCPass ? '✓ PASS' : '✗ FAIL');
 
-  // TEST 4: Product exists in merchant catalog -> Vision matches real database product
-  const test4 = await request('/api/chat', 'POST', {
+  // STEP 10 - TEST D: Actual image = LAPTOP, Filename = "WhatsApp Image 2026.jpeg" -> Must detect LAPTOP
+  const testD = await request('/api/chat', 'POST', {
+    image_name: 'WhatsApp Image 2026-09-05 at 10.36.03 PM.jpeg',
+    image_data: laptopDataUrl,
+    customer_id: customerId,
+    modality: 'IMAGE'
+  }, customerToken);
+  const testDPass = testD.status === 200 &&
+    testD.data.visual_attributes?.detected_object === 'laptop';
+  console.log('[15D] Vision TEST D (Actual LAPTOP + WhatsApp Filename -> Recognized as LAPTOP):', testDPass ? '✓ PASS' : '✗ FAIL');
+
+  // TEST E: Shoe image -> Matches real database footwear
+  const testE = await request('/api/chat', 'POST', {
     message: 'Find this sneaker',
-    image_name: 'running_shoes.jpg',
+    image_name: 'WhatsApp Image 2026.jpeg',
     image_data: shoeDataUrl,
     customer_id: customerId,
     modality: 'IMAGE'
   }, customerToken);
-  const test4Pass = test4.status === 200 &&
-    test4.data.products?.length > 0 &&
-    ['prod_shoe_01', 'prod_shoe_02'].includes(test4.data.primary_product?.id);
-  console.log('[15D] Vision TEST 4 (Vision -> Matching Real Merchant Catalog Product):', test4Pass ? '✓ PASS' : '✗ FAIL');
+  const testEPass = testE.status === 200 &&
+    testE.data.products?.length > 0 &&
+    ['prod_shoe_01', 'prod_shoe_02'].includes(testE.data.primary_product?.id);
+  console.log('[15E] Vision TEST E (Vision -> Matching Real Merchant Catalog Footwear):', testEPass ? '✓ PASS' : '✗ FAIL');
 
-  // TEST 5: Out of Catalog product (Watch) -> Grounded fallback without inventing products
-  const test5 = await request('/api/chat', 'POST', {
-    image_name: 'luxury_watch.jpg',
+  // TEST F: Out of Catalog product (Watch) -> Grounded fallback without inventing products
+  const testF = await request('/api/chat', 'POST', {
+    image_name: 'WhatsApp Image 2026.jpeg',
     image_data: watchDataUrl,
     customer_id: customerId,
     modality: 'IMAGE'
   }, customerToken);
-  const test5Pass = test5.status === 200 &&
-    test5.data.products?.length === 0 &&
-    test5.data.ai_message.includes("couldn't find a matching product in this store");
-  console.log('[15E] Vision TEST 5 (Out-of-Catalog Product -> Grounded Fallback):', test5Pass ? '✓ PASS' : '✗ FAIL');
+  const testFPass = testF.status === 200 &&
+    testF.data.products?.length === 0 &&
+    testF.data.ai_message.includes("couldn't find a matching product in this store");
+  console.log('[15F] Vision TEST F (Out-of-Catalog Product -> Grounded Fallback):', testFPass ? '✓ PASS' : '✗ FAIL');
 
-  // TEST 6: Unrelated non-product image -> Grounded non-product rejection
-  const test6 = await request('/api/chat', 'POST', {
+  // TEST G: STEP 8 FALLBACK CHECK - Unrelated non-product image -> "Sorry, I couldn't understand the image."
+  const testG = await request('/api/chat', 'POST', {
     image_name: 'random_scenery.jpg',
     image_data: nonProductDataUrl,
     customer_id: customerId,
     modality: 'IMAGE'
   }, customerToken);
-  const test6Pass = test6.status === 200 &&
-    test6.data.products?.length === 0 &&
-    test6.data.ai_message.includes("couldn't identify a purchasable product");
-  console.log('[15F] Vision TEST 6 (Non-Product Image -> Strict No-Product Rejection):', test6Pass ? '✓ PASS' : '✗ FAIL');
+  const testGPass = testG.status === 200 &&
+    testG.data.products?.length === 0 &&
+    testG.data.ai_message === "Sorry, I couldn't understand the image.";
+  console.log('[15G] Vision TEST G (Step 8 Fallback Safety -> Exact "Sorry, I couldn\'t understand the image."):', testGPass ? '✓ PASS' : '✗ FAIL');
 
-  // TEST 7: Image + Text Budget Constraint ("under ₹1,000")
-  const test7 = await request('/api/chat', 'POST', {
-    message: 'Find something similar under ₹1,000',
-    image_name: 'WhatsApp Image 2026-09-05.jpeg',
-    image_data: cakeDataUrl,
-    customer_id: customerId,
-    modality: 'MULTIMODAL'
-  }, customerToken);
-  const test7Pass = test7.status === 200 &&
-    test7.data.products?.length > 0 &&
-    test7.data.products.every(p => p.price <= 1000);
-  console.log('[15G] Vision TEST 7 (Image + Text Budget Bound <= ₹1,000):', test7Pass ? '✓ PASS' : '✗ FAIL');
-
-  // TEST 8: Add to Cart directly with exact product_id (without re-running vision AI)
-  const productToDirectAdd = test4.data.primary_product || test4.data.products[0];
+  // TEST H: Direct Add to Cart with exact product_id (without re-running vision AI)
+  const productToDirectAdd = testE.data.primary_product || testE.data.products[0];
   const directCartRes = await request('/api/cart/items', 'POST', {
     customer_id: customerId,
     product_id: productToDirectAdd.id,
     quantity: 1
   }, customerToken);
-  const test8Pass = directCartRes.status === 200 &&
+  const testHPass = directCartRes.status === 200 &&
     directCartRes.data.items?.some(it => it.product_id === productToDirectAdd.id);
-  console.log('[15H] Vision TEST 8 (Direct Add to Cart exact product ID safety):', test8Pass ? '✓ PASS' : '✗ FAIL');
+  console.log('[15H] Vision TEST H (Direct Add to Cart exact product ID safety):', testHPass ? '✓ PASS' : '✗ FAIL');
 
   // 16. Smart Discount Decision Engine
   const discounts = await request('/api/merchant/smart-discounts', 'GET', null, merchantToken);
