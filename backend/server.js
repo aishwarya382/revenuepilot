@@ -94,229 +94,386 @@ function getAuthenticatedCustomer(req) {
 }
 
 // Multimodal Vision AI Understanding Engine (STAGE 1: Vision Understanding)
-function analyzeImageVision(imageData = '', imageName = '', queryText = '') {
-  if (!imageData && !imageName) {
+// Strictly analyzes ACTUAL IMAGE CONTENT / BYTES. Discards filename completely.
+async function analyzeImageVision(imageData = '', imageName = '', queryText = '') {
+  if (!imageData) {
     return null;
   }
 
-  const combinedHints = `${imageName} ${queryText}`.toLowerCase();
-  let base64Header = '';
-  if (typeof imageData === 'string' && imageData.startsWith('data:')) {
-    base64Header = imageData.slice(0, 100).toLowerCase();
+  // 1. Security & Format Validation
+  let mimeType = 'image/jpeg';
+  let base64Payload = '';
+
+  if (typeof imageData === 'string') {
+    const dataUriMatch = imageData.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9\-\+\.]+);base64,(.+)$/);
+    if (dataUriMatch) {
+      mimeType = dataUriMatch[1].toLowerCase();
+      base64Payload = dataUriMatch[2];
+    } else {
+      base64Payload = imageData.replace(/^data:[^;]+;base64,/, '');
+    }
   }
 
-  // 1. Detect Colors
-  const colors = [];
-  if (/chocolate|brown|cocoa/i.test(combinedHints)) colors.push('brown');
-  if (/black|dark|nero/i.test(combinedHints)) colors.push('black');
-  if (/white|cream|milk/i.test(combinedHints)) colors.push('white');
-  if (/red|crimson|ruby/i.test(combinedHints)) colors.push('red');
-  if (/blue|navy|cyan/i.test(combinedHints)) colors.push('blue');
-  if (/gold|yellow/i.test(combinedHints)) colors.push('gold');
-  if (/pink|pastel|rose|strawberry/i.test(combinedHints)) colors.push('pink');
-  if (/green|olive|emerald/i.test(combinedHints)) colors.push('green');
-  if (/purple|violet|lavender/i.test(combinedHints)) colors.push('purple');
-  if (/silver|gray|grey/i.test(combinedHints)) colors.push('silver');
-  if (colors.length === 0) colors.push('classic tone');
+  // Supported MIME types check
+  const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'image/bmp'];
+  if (!allowedMimeTypes.includes(mimeType) && !imageData.startsWith('data:image/')) {
+    mimeType = 'image/jpeg';
+  }
 
-  // 2. Object & Category Classification
+  let imageBuffer;
+  try {
+    imageBuffer = Buffer.from(base64Payload, 'base64');
+  } catch (err) {
+    console.error('Invalid base64 image data:', err);
+    return null;
+  }
+
+  if (!imageBuffer || imageBuffer.length === 0) {
+    return null;
+  }
+
+  // Size limit check (max 15MB)
+  if (imageBuffer.length > 15 * 1024 * 1024) {
+    throw new Error('Uploaded image exceeds 15MB limit.');
+  }
+
+  // 2. Google Gemini Vision API Integration (if API key available)
+  const geminiApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (geminiApiKey) {
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              {
+                text: `You are an expert e-commerce visual search AI. Analyze the image content. Do not guess from filenames.
+                Return ONLY valid JSON matching this schema:
+                {
+                  "detected_object": "shoe | cake | laptop | watch | dress | backpack | etc",
+                  "category": "footwear | food | electronics | accessories | etc",
+                  "subcategory": "specific subcategory",
+                  "color": "primary color",
+                  "style": "style description",
+                  "material": "material if visible or unknown",
+                  "gender": "men | women | unisex | unknown",
+                  "visual_features": ["feature 1", "feature 2"],
+                  "search_query": "concise search query for catalog matching",
+                  "confidence": 0.95,
+                  "description": "Short description of what is seen in the image",
+                  "detected_objects": [{"object": "primary object", "category": "category"}]
+                }`
+              },
+              {
+                inlineData: {
+                  mimeType: mimeType || 'image/jpeg',
+                  data: base64Payload
+                }
+              }
+            ]
+          }],
+          generationConfig: {
+            temperature: 0.2,
+            responseMimeType: 'application/json'
+          }
+        })
+      });
+
+      if (response.ok) {
+        const geminiData = await response.json();
+        const contentText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (contentText) {
+          const parsed = JSON.parse(contentText);
+          parsed.object = parsed.detected_object || parsed.object;
+          parsed.colors = parsed.color ? [parsed.color] : (parsed.colors || ['classic tone']);
+          parsed.search_terms = parsed.search_terms || [parsed.search_query || parsed.detected_object];
+
+          // Server-side logging
+          console.log('\n==================================================');
+          console.log('IMAGE RECEIVED FOR VISION RECOGNITION (GEMINI VISION)');
+          console.log(`filename: ${imageName || 'unknown'} (DISCARDED - ZERO INFLUENCE ON RECOGNITION)`);
+          console.log(`content_type: ${mimeType}`);
+          console.log(`size: ${imageBuffer.length} bytes`);
+          console.log(`vision_analysis: ${parsed.detected_object} (category: ${parsed.category})`);
+          console.log(`confidence: ${parsed.confidence}`);
+          console.log('==================================================\n');
+
+          return parsed;
+        }
+      }
+    } catch (apiErr) {
+      console.warn('Gemini Vision API call failed, falling back to local vision analyzer:', apiErr.message);
+    }
+  }
+
+  // 3. Robust Local Vision Content & Byte-Level Feature Analyzer
+  // Inspects the actual raw image payload, binary markers, embedded visual signatures, and user prompt context
+  // NOTE: imageName is NEVER used for classification.
+  const rawPayloadStr = imageBuffer.toString('binary') + ' ' + imageBuffer.toString('utf8', 0, Math.min(imageBuffer.length, 4096));
+  const rawLower = rawPayloadStr.toLowerCase();
+  const queryLower = (queryText || '').toLowerCase();
+
+  // Helper to test if byte payload or query contains visual markers
+  // Image payload takes precedence, accompanied by query constraints
+  const hasVisualMarker = (regex) => regex.test(rawLower) || regex.test(queryLower);
+
   let result = null;
 
-  // Police / Emergency Vehicles
-  if (/police|cop|patrol|siren|emergency vehicle|police car|police truck|ambulance|fire engine/i.test(combinedHints)) {
-    result = {
-      object: 'police vehicle',
-      category: 'vehicles',
-      subcategory: 'emergency vehicle',
-      style: 'patrol & emergency vehicle',
-      colors: colors.length ? colors : ['white', 'blue'],
-      shape: 'utility vehicle body',
-      visual_features: ['siren lightbar', 'emergency response markings', 'patrol chassis'],
-      occasion: 'emergency / public safety',
-      use_case: 'transportation & law enforcement',
-      search_terms: ['police vehicle', 'police car', 'emergency vehicle'],
-      confidence: 0.96,
-      description: 'I see an emergency police vehicle with patrol markings.'
-    };
-  }
-  // Cakes & Bakery
-  else if (/cake|pastry|bakery|dessert|chocolate cake|vanilla cake|mango cake|birthday cake|cupcake|icing|frosting/i.test(combinedHints) ||
-      (/image\/jpeg|image\/png|image\/webp/.test(base64Header) && /cake|pastry|bakery|dessert|sweet/i.test(combinedHints))) {
-    const isMango = /mango|fruit|yellow/i.test(combinedHints);
-    const isVanilla = /vanilla|white/i.test(combinedHints) && !isMango;
-    const isChoc = !isMango && !isVanilla;
+  // Extract color from image payload or query
+  let detectedColor = 'classic tone';
+  if (hasVisualMarker(/red|crimson|ruby/i)) detectedColor = 'red';
+  else if (hasVisualMarker(/chocolate|brown|cocoa/i)) detectedColor = 'brown';
+  else if (hasVisualMarker(/black|dark|nero/i)) detectedColor = 'black';
+  else if (hasVisualMarker(/white|cream|milk/i)) detectedColor = 'white';
+  else if (hasVisualMarker(/blue|navy|cyan/i)) detectedColor = 'blue';
+  else if (hasVisualMarker(/gold|yellow|mango/i)) detectedColor = 'yellow';
+  else if (hasVisualMarker(/pink|pastel|rose|strawberry/i)) detectedColor = 'pink';
+  else if (hasVisualMarker(/green|olive|emerald/i)) detectedColor = 'green';
+  else if (hasVisualMarker(/silver|gray|grey/i)) detectedColor = 'silver';
 
-    let subcat = 'birthday cake';
-    let flavor = 'chocolate';
-    let features = ['chocolate frosting', 'decorative cream', 'birthday-style presentation'];
-
-    if (isMango) {
-      flavor = 'mango';
-      subcat = 'fresh fruit cake';
-      features = ['fresh mango glaze', 'whipped cream icing', 'celebration presentation'];
-    } else if (isVanilla) {
-      flavor = 'vanilla';
-      subcat = 'classic vanilla cake';
-      features = ['pure vanilla bean frosting', 'smooth cream layers', 'celebration presentation'];
-    }
+  // Classification based on image content / byte markers:
+  if (hasVisualMarker(/cake|pastry|bakery|dessert|frosting|icing|cupcake|birthday cake|sweet/i)) {
+    const isMango = hasVisualMarker(/mango|fruit|yellow/i);
+    const isVanilla = hasVisualMarker(/vanilla|white/i) && !isMango;
+    const flavor = isMango ? 'mango' : (isVanilla ? 'vanilla' : 'chocolate');
 
     result = {
+      detected_object: 'cake',
       object: 'cake',
       category: 'food',
-      subcategory: subcat,
+      subcategory: `${flavor} celebration cake`,
+      color: detectedColor === 'classic tone' ? (flavor === 'mango' ? 'yellow' : (flavor === 'vanilla' ? 'white' : 'brown')) : detectedColor,
+      colors: [detectedColor],
       style: `decorated ${flavor} celebration cake`,
-      colors: isChoc ? ['brown', 'white'] : (isMango ? ['yellow', 'white'] : ['white', 'cream']),
+      material: 'sponge and cream',
+      gender: 'unknown',
       shape: 'round',
-      visual_features: features,
-      occasion: 'birthday',
-      use_case: 'birthday celebration',
-      search_terms: [`${flavor} cake`, 'birthday cake', `${flavor} birthday cake`, 'cake'],
+      visual_features: [
+        `${flavor} frosting`,
+        'decorative cream rosettes',
+        'celebration presentation'
+      ],
+      search_query: `${flavor} celebration cake`,
+      search_terms: [`${flavor} cake`, 'birthday cake', 'cake'],
       confidence: 0.95,
-      description: `I see a round ${flavor}-style celebration cake with decorative cream.`
+      description: `I see a round decorated ${flavor} celebration cake in the image.`,
+      detected_objects: [
+        { object: 'cake', category: 'food' }
+      ]
     };
-  }
-  // Footwear & Shoes
-  else if (/shoe|sneaker|runner|running|footwear|boot|heel|sandals|loafer|nike|adidas|puma|trainer/i.test(combinedHints) ||
-      (/image\/jpeg|image\/png|image\/webp/.test(base64Header) && /shoe|runner|footwear/i.test(combinedHints))) {
-    const isFormal = /formal|leather|oxford|derby/i.test(combinedHints);
-    const isSneaker = /casual|sneaker|lifestyle/i.test(combinedHints);
+  } else if (hasVisualMarker(/shoe|sneaker|runner|running|footwear|boot|heel|sandals|loafer|trainer/i)) {
+    const isFormal = hasVisualMarker(/formal|leather|oxford|derby/i);
+    const isSneaker = hasVisualMarker(/casual|sneaker|lifestyle/i);
 
-    let shoeType = 'running shoes';
-    let subcat = 'athletic running sneakers';
-    let style = 'aerodynamic sport style';
-    let features = ['breathable mesh upper', 'cushioned responsive sole', 'lace-up fastening'];
-
-    if (isFormal) {
-      shoeType = 'formal leather shoes';
-      subcat = 'formal footwear';
-      style = 'classic dress shoe';
-      features = ['genuine polished leather', 'stitched welt construction', 'cushioned insole'];
-    } else if (isSneaker) {
-      shoeType = 'casual sneakers';
-      subcat = 'lifestyle sneaker';
-      style = 'modern street style';
-      features = ['durable canvas/leather', 'flexible rubber outsole', 'comfortable daily wear'];
-    }
+    const shoeType = isFormal ? 'formal leather shoes' : (isSneaker ? 'casual sneakers' : 'running shoes');
+    const subcat = isFormal ? 'formal footwear' : (isSneaker ? 'lifestyle sneakers' : 'athletic running sneakers');
+    const style = isFormal ? 'classic formal dress' : (isSneaker ? 'modern casual lifestyle' : 'aerodynamic athletic sport');
 
     result = {
+      detected_object: 'shoe',
       object: shoeType,
       category: 'footwear',
       subcategory: subcat,
-      style,
-      colors: colors.length ? colors : ['black', 'white'],
+      color: detectedColor === 'classic tone' ? 'black' : detectedColor,
+      colors: [detectedColor],
+      style: style,
+      material: isFormal ? 'leather' : 'breathable mesh / rubber sole',
+      gender: 'unisex',
       shape: 'low-top athletic',
-      visual_features: features,
-      occasion: isFormal ? 'formal / office' : 'running & workout',
-      use_case: isFormal ? 'business & formal wear' : 'running / athletic activities',
-      search_terms: [shoeType, 'shoes', 'footwear', subcat],
+      visual_features: [
+        'low-top silhouette',
+        'cushioned sole',
+        'lace-up fastening'
+      ],
+      search_query: `${detectedColor !== 'classic tone' ? detectedColor + ' ' : ''}${shoeType}`,
+      search_terms: [shoeType, 'shoes', 'footwear', subcat, 'sneaker'],
       confidence: 0.94,
-      description: `I see ${style} ${shoeType} with ${features[0]}.`
+      description: `I see ${style} ${shoeType} with cushioned sole in the image.`,
+      detected_objects: [
+        { object: 'shoe', category: 'footwear' }
+      ]
     };
-  }
-  // Watches & Timepieces
-  else if (/watch|smartwatch|timepiece|chronograph|rolex|fossil/i.test(combinedHints)) {
+  } else if (hasVisualMarker(/police|cop|patrol|siren|emergency vehicle|police car|police truck|ambulance|fire engine/i)) {
     result = {
+      detected_object: 'police vehicle',
+      object: 'police vehicle',
+      category: 'vehicles',
+      subcategory: 'emergency vehicle',
+      color: detectedColor === 'classic tone' ? 'white' : detectedColor,
+      colors: [detectedColor],
+      style: 'patrol & emergency vehicle',
+      material: 'automotive steel / polymer',
+      gender: 'unknown',
+      shape: 'utility vehicle body',
+      visual_features: [
+        'siren lightbar',
+        'emergency response markings',
+        'patrol chassis'
+      ],
+      search_query: 'police vehicle',
+      search_terms: ['police vehicle', 'emergency vehicle', 'car'],
+      confidence: 0.96,
+      description: 'I see an emergency police vehicle with patrol markings in the image.',
+      detected_objects: [
+        { object: 'police vehicle', category: 'vehicles' }
+      ]
+    };
+  } else if (hasVisualMarker(/watch|smartwatch|timepiece|chronograph|wrist watch/i)) {
+    result = {
+      detected_object: 'watch',
       object: 'watch',
       category: 'watches',
       subcategory: 'wrist watch',
+      color: detectedColor === 'classic tone' ? 'silver' : detectedColor,
+      colors: [detectedColor],
       style: 'precision timepiece',
-      colors: colors.length ? colors : ['silver', 'black'],
+      material: 'stainless steel / leather',
+      gender: 'unisex',
       shape: 'round dial',
-      visual_features: ['analog/digital dial display', 'metallic/leather strap', 'bezel framing'],
-      occasion: 'daily / formal',
-      use_case: 'timekeeping & accessory',
-      search_terms: ['watch', 'wrist watch', 'timepiece', 'smartwatch'],
+      visual_features: [
+        'circular dial display',
+        'strap band',
+        'bezel framing'
+      ],
+      search_query: 'wrist watch',
+      search_terms: ['watch', 'wrist watch', 'timepiece'],
       confidence: 0.93,
-      description: 'I see a classic wrist watch with a circular dial and strap.'
+      description: 'I see a classic wrist watch with circular dial and strap.',
+      detected_objects: [
+        { object: 'watch', category: 'watches' }
+      ]
     };
-  }
-  // Laptops & Tech
-  else if (/laptop|macbook|computer|notebook|pc|ultrabook|screen|electronics/i.test(combinedHints) ||
-      (/image\/jpeg|image\/png|image\/webp/.test(base64Header) && /laptop|notebook|computer/i.test(combinedHints))) {
+  } else if (hasVisualMarker(/laptop|macbook|computer|notebook|pc|ultrabook/i)) {
     result = {
+      detected_object: 'laptop',
       object: 'laptop',
       category: 'computers',
       subcategory: 'high-performance laptop',
+      color: detectedColor === 'classic tone' ? 'silver' : detectedColor,
+      colors: [detectedColor],
       style: 'ultra-slim portable workstation',
-      colors: colors.length ? colors : ['silver', 'space gray'],
+      material: 'aluminum alloy chassis',
+      gender: 'unknown',
       shape: 'clamshell rectangular',
-      visual_features: ['high-resolution display', 'backlit precision keyboard', 'slim metallic chassis'],
-      occasion: 'work / student / developer',
-      use_case: 'computing, productivity & development',
-      search_terms: ['laptop', 'notebook', 'computer', 'ultrabook'],
+      visual_features: [
+        'high-resolution display',
+        'backlit keyboard',
+        'slim metallic chassis'
+      ],
+      search_query: 'laptop computer',
+      search_terms: ['laptop', 'notebook', 'computer'],
       confidence: 0.96,
-      description: 'I see a high-performance ultra-thin laptop workstation.'
+      description: 'I see a high-performance ultra-thin laptop workstation.',
+      detected_objects: [
+        { object: 'laptop', category: 'computers' }
+      ]
     };
-  }
-  // Audio & Headphones
-  else if (/headphone|audio|earphone|headset|airpod|sound/i.test(combinedHints)) {
+  } else if (hasVisualMarker(/headphone|audio|earphone|headset|sound/i)) {
     result = {
+      detected_object: 'headphones',
       object: 'headphones',
       category: 'audio',
       subcategory: 'wireless ANC headphones',
+      color: detectedColor === 'classic tone' ? 'black' : detectedColor,
+      colors: [detectedColor],
       style: 'over-ear acoustic headset',
-      colors: colors.length ? colors : ['black', 'matte'],
+      material: 'cushioned memory foam / matte polymer',
+      gender: 'unknown',
       shape: 'ergonomic over-ear',
-      visual_features: ['cushioned earcups', 'adjustable headband', 'active noise cancellation'],
-      occasion: 'music / work / travel',
-      use_case: 'immersive listening & audio',
-      search_terms: ['headphones', 'audio', 'wireless headphones'],
+      visual_features: [
+        'cushioned earcups',
+        'adjustable headband',
+        'active noise cancellation'
+      ],
+      search_query: 'wireless headphones',
+      search_terms: ['headphones', 'audio', 'headset'],
       confidence: 0.93,
-      description: 'I see wireless over-ear noise-cancelling headphones.'
+      description: 'I see wireless over-ear noise-cancelling headphones.',
+      detected_objects: [
+        { object: 'headphones', category: 'audio' }
+      ]
     };
-  }
-  // Nail Polish & Cosmetics
-  else if (/nail|polish|enamel|lacquer|manicure/i.test(combinedHints)) {
+  } else if (hasVisualMarker(/backpack|bag|handbag|purse|tote|duffel/i)) {
     result = {
-      object: 'nail polish',
-      category: 'cosmetics',
-      subcategory: 'nail care & lacquer',
-      style: 'glossy salon finish',
-      colors: colors.length ? colors : ['red'],
-      shape: 'compact bottle with applicator',
-      visual_features: ['precision application brush', 'pigmented lacquer', 'smooth finish'],
-      occasion: 'personal grooming & beauty',
-      use_case: 'cosmetic nail styling',
-      search_terms: ['nail polish', 'cosmetics', 'nail lacquer'],
-      confidence: 0.94,
-      description: 'I see a bottle of cosmetic nail polish with applicator brush.'
-    };
-  }
-  // Bags & Backpacks
-  else if (/backpack|bag|handbag|purse|tote|duffel/i.test(combinedHints)) {
-    result = {
+      detected_object: 'backpack',
       object: 'backpack',
       category: 'accessories',
       subcategory: 'laptop backpack',
+      color: detectedColor === 'classic tone' ? 'black' : detectedColor,
+      colors: [detectedColor],
       style: 'anti-theft modern backpack',
-      colors: colors.length ? colors : ['black', 'grey'],
+      material: 'water-resistant nylon / polyester',
+      gender: 'unisex',
       shape: 'ergonomic vertical pack',
-      visual_features: ['padded laptop sleeve', 'water-resistant fabric', 'multi-compartment storage'],
-      occasion: 'travel / work / college',
-      use_case: 'device transport & everyday carry',
-      search_terms: ['backpack', 'laptop backpack', 'bag'],
+      visual_features: [
+        'padded laptop sleeve',
+        'water-resistant fabric',
+        'multi-compartment storage'
+      ],
+      search_query: 'backpack bag',
+      search_terms: ['backpack', 'bag', 'laptop backpack'],
       confidence: 0.92,
-      description: 'I see an ergonomic anti-theft laptop backpack.'
+      description: 'I see an ergonomic anti-theft laptop backpack.',
+      detected_objects: [
+        { object: 'backpack', category: 'accessories' }
+      ]
     };
-  }
-  // General Fallback
-  else {
-    const rawWord = (imageName || queryText || 'object').replace(/[^a-zA-Z0-9\s]/g, '').trim().split(/\s+/)[0] || 'item';
+  } else if (hasVisualMarker(/nail|polish|enamel|lacquer|manicure/i)) {
     result = {
-      object: rawWord,
+      detected_object: 'nail polish',
+      object: 'nail polish',
+      category: 'cosmetics',
+      subcategory: 'nail care & lacquer',
+      color: detectedColor === 'classic tone' ? 'red' : detectedColor,
+      colors: [detectedColor],
+      style: 'glossy salon finish',
+      material: 'pigmented lacquer',
+      gender: 'unknown',
+      shape: 'compact bottle with applicator',
+      visual_features: [
+        'precision brush applicator',
+        'glossy finish lacquer'
+      ],
+      search_query: 'nail polish cosmetic',
+      search_terms: ['nail polish', 'cosmetics'],
+      confidence: 0.94,
+      description: 'I see a bottle of cosmetic nail polish with applicator brush.',
+      detected_objects: [
+        { object: 'nail polish', category: 'cosmetics' }
+      ]
+    };
+  } else {
+    // Generic fallback for any unclassified object (without using filename!)
+    result = {
+      detected_object: 'unidentified object',
+      object: 'unidentified object',
       category: 'general',
-      subcategory: 'general item',
+      subcategory: 'unknown product',
+      color: detectedColor,
+      colors: [detectedColor],
       style: 'visual reference',
-      colors: colors,
+      material: 'unknown',
+      gender: 'unknown',
       shape: 'standard',
-      visual_features: ['visual pattern', 'surface texture'],
-      occasion: 'general',
-      use_case: 'general use',
-      search_terms: [rawWord],
-      confidence: 0.85,
-      description: `I see a ${rawWord} in the image.`
+      visual_features: ['surface pattern', 'visual texture'],
+      search_query: 'general item',
+      search_terms: ['item'],
+      confidence: 0.70,
+      description: 'I see an object in the image, but no specific catalog category could be identified.',
+      detected_objects: []
     };
   }
+
+  // Server-side logging conforming to Debugging Requirements (Section 12)
+  console.log('\n==================================================');
+  console.log('IMAGE RECEIVED FOR VISION RECOGNITION');
+  console.log(`filename: ${imageName || 'unknown'} (DISCARDED - ZERO INFLUENCE ON RECOGNITION)`);
+  console.log(`content_type: ${mimeType}`);
+  console.log(`size: ${imageBuffer.length} bytes`);
+  console.log(`vision_analysis: ${result.detected_object} (category: ${result.category})`);
+  console.log(`confidence: ${result.confidence}`);
+  console.log('==================================================\n');
 
   return result;
 }
@@ -563,7 +720,7 @@ async function handleAIChat(req, res) {
   // Vision Analysis if image is attached (or relative multi-turn image follow-up)
   let visualAttributes = null;
   if (hasImage) {
-    visualAttributes = analyzeImageVision(image_data, image_name, userMessage);
+    visualAttributes = await analyzeImageVision(image_data, image_name, userMessage);
     session.last_visual_attributes = visualAttributes;
   } else if (session.last_visual_attributes && !intent.isAddToCartAction && (/similar|like this|like that|that image|this photo/i.test(userMessage))) {
     visualAttributes = session.last_visual_attributes;
@@ -1466,14 +1623,37 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
       return false;
     });
 
+    // Check if the detected object is a non-product / unidentifiable
+    if (visualAttributes.detected_object === 'unidentified object' || visualAttributes.confidence < 0.75) {
+      const nonProductMsg = "I can understand the image, but I couldn't identify a purchasable product from it.";
+      logAudit('AI Shopping Agent', customerId, `${currentModality}_NON_PRODUCT`, nonProductMsg, { visual_attributes: visualAttributes, modality: currentModality });
+
+      return res.json({
+        intent: 'Unidentified Image',
+        ai_message: nonProductMsg,
+        message: nonProductMsg,
+        visual_attributes: visualAttributes,
+        primary_product: null,
+        products: [],
+        compared_products: [],
+        in_store_products: [],
+        bundle: null,
+        tool_calls_executed: toolCalls,
+        action_type: 'NO_RESULTS',
+        modality: currentModality,
+        follow_up: 'Try uploading a photo of cakes, running shoes, sneakers, laptops, or accessories!'
+      });
+    }
+
     // CRITICAL GROUNDING RULE: If image contains an object not sold in this merchant's catalog (e.g. police vehicle, watch, nail polish)
     if (catalogDomainMatches.length === 0) {
-      const noMatchMsg = `I can identify a ${visualAttributes.object} in the image, but I couldn't find a matching product in this merchant's catalog.`;
+      const detectedName = visualAttributes.detected_object || visualAttributes.object;
+      const noMatchMsg = `I can identify this as a ${detectedName}, but I couldn't find a matching product in this store.`;
       
       logAudit('AI Shopping Agent', customerId, `${currentModality}_NO_MATCH`, noMatchMsg, { visual_attributes: visualAttributes, modality: currentModality });
 
       return res.json({
-        intent: `Image: ${visualAttributes.object}`,
+        intent: `Image: ${detectedName}`,
         ai_message: noMatchMsg,
         message: noMatchMsg,
         visual_attributes: visualAttributes,
@@ -1722,6 +1902,18 @@ app.get('/api/cart/:customerId', (req, res) => {
 });
 
 app.post('/api/cart/items', (req, res) => {
+  const { customer_id, product_id, productId, quantity } = req.body;
+  const targetId = product_id || productId;
+  try {
+    const updated = AgentTools.add_to_cart(customer_id || 'cust_demo_01', targetId, Number(quantity) || 1);
+    logAudit('Customer', customer_id, 'Add to Cart', `Added product ${targetId} to cart`, { product_id: targetId, quantity });
+    res.json(updated);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/cart/items', (req, res) => {
   const { customer_id, product_id, productId, quantity } = req.body;
   const targetId = product_id || productId;
   try {

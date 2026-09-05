@@ -1,7 +1,7 @@
 # Revenue Pilot AI
 
 > **AI-Native Commerce Platform that turns Customer Intent into Merchant Revenue.**  
-> Built for the **Razorpay AI Commerce Track 01 Challenge**.
+> Built for the **Razorpay AI Commerce Innovation Challenge**.
 
 ---
 
@@ -28,8 +28,8 @@ $$\text{Customer Goal} \longrightarrow \text{AI Intent \& Vision} \longrightarro
                                          ▼
 ┌───────────────────────────────────────────────────────────────────────────────────┐
 │                         AI INTENT & VISION PIPELINE                               │
-│  • Speech-to-Text Transcription Badge (🎙️ Spoken Voice)                           │
-│  • Visual Attribute Analyzer (Category, Color, Style, Features)                  │
+│  • Stage 1 Vision AI: Structured Visual Extraction (Category, Color, Style)       │
+│  • Speech-to-Text: Native Web Speech API with Live Dictation & Indian English     │
 │  • Positional Memory Resolver ("Add the 2nd one" → Index 1)                       │
 │  • Budget Constraint & Occasion Extractor ("under ₹1,000")                        │
 └────────────────────────────────────────┬──────────────────────────────────────────┘
@@ -44,11 +44,12 @@ $$\text{Customer Goal} \longrightarrow \text{AI Intent \& Vision} \longrightarro
                                          │
                                          ▼
 ┌───────────────────────────────────────────────────────────────────────────────────┐
-│                        CART & RAZORPAY PAYMENT GATEWAY                            │
+│                        CART & REAL-WORLD CHECKOUT FLOW                            │
 │  • 1-Click "Add Complete Bundle" or "Add That One"                                │
-│  • Server-Side Price Verification (Never trust client-supplied totals)            │
-│  • Razorpay Test Mode Order Creation & Cryptographic Signature Verification      │
-│  • Atomic Inventory Deduction on Payment Success                                  │
+│  • Delivery Address Management & Validation (Pin code, Area, City, State)         │
+│  • Order Summary & Server-Authoritative Price Calculation                         │
+│  • Payment Methods: Cash on Delivery (COD) & Razorpay Test Gateway                │
+│  • Cryptographic Razorpay Signature Verification & Stock Management              │
 │  • Failure Recovery (Preserves cart if payment cancelled or timed out)            │
 └────────────────────────────────────────┬──────────────────────────────────────────┘
                                          │
@@ -67,8 +68,9 @@ $$\text{Customer Goal} \longrightarrow \text{AI Intent \& Vision} \longrightarro
 ## 🎯 Core Features
 
 ### 1. Multimodal Conversational Shopping
-- **Voice Shopping**: Speak directly via your microphone using browser-native Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`). Spoken queries appear in chat with a `🎙️ Spoken Voice` badge.
-- **Vision Image Search**: Upload a product photo, screenshot, or gift inspiration. The backend vision analyzer extracts visual attributes (e.g. *Black Running Shoes • Sport style • Everyday running*) and matches against verified store inventory.
+- **ChatGPT-Style Voice Input**: Speak directly via your microphone using browser-native Web Speech API (`SpeechRecognition` / `webkitSpeechRecognition`). Progressive interim dictation streams into the input box and normalizes spoken numbers (e.g., *"under one thousand rupees"* $\rightarrow$ `₹1,000`).
+- **Decoupled Vision Image Search**: Upload a product photo or screenshot. Stage 1 extracts structured visual attributes (`object`, `category`, `colors`, `style`, `visual_features`), and Stage 2 searches the real merchant catalog.
+- **Strict Grounding Fallback**: If an image contains out-of-catalog items (e.g., police vehicle, watch, nail polish), the AI clearly informs the user without fabricating fake products.
 - **Multimodal Combinations**: Upload an image + speak or type budget constraints (e.g., photo of sneakers + *"Find something like this under ₹3,000"*).
 
 ### 2. Contextual Memory & Positional Grounding
@@ -76,28 +78,20 @@ $$\text{Customer Goal} \longrightarrow \text{AI Intent \& Vision} \longrightarro
   - *"Show chocolate ones"* $\rightarrow$ Filters previous search results.
   - *"Which one is best?"* $\rightarrow$ Generates comparison matrix of currently displayed options.
   - *"Add the second one"* $\rightarrow$ Maps ordinal `2nd` to index `1` in active search results and adds exact `product_id` to cart.
-  - *"Add the cake and candles"* $\rightarrow$ Adds primary item and complementary accessories with exact IDs.
+  - *"Add that one to my cart"* $\rightarrow$ Adds primary displayed product with exact ID.
 
-### 3. AI Basket Growth Builder (Revenue Innovation)
-- Identifies contextual bundling opportunities from the same merchant store.
-- Strictly bounds package totals within customer budget limits.
-- Provides customer choice: 1-click **Add Complete Bundle** or **Just Main Product**.
+### 3. Complete Real-World Checkout Flow
+- **Product Discovery** $\rightarrow$ **Product Details** $\rightarrow$ **Add to Cart** $\rightarrow$ **Delivery Address** $\rightarrow$ **Order Summary** $\rightarrow$ **Payment Selection** $\rightarrow$ **Payment Verification** $\rightarrow$ **Order Confirmation**.
+- **Payment Options**:
+  - **Razorpay Test Gateway**: Encrypted card/UPI/net-banking checkout with server-side HMAC-SHA256 signature verification.
+  - **Cash on Delivery (COD)**: Places order in `PENDING` payment state without charging or marking paid prematurely.
+- **Cart Safety & Inventory Protection**: Preserves cart if payment fails or is aborted. Deducts stock atomically on verified completion.
 
-### 4. Merchant Innovation Lab & Smart Discount Engine
-- **Intent $\rightarrow$ Revenue Signals**: Aggregates customer search trends and highlights cross-sell opportunities.
-- **Smart Discount Engine**: Evaluates cart abandonment and inventory velocity to recommend margin-safe discounts (e.g., 5% targeted discount vs. heavy price cuts).
-- **What-If Simulator**: Models projected orders, customer savings, and merchant basket uplift.
+### 4. Merchant Innovation Lab & Multi-Tenant Isolation
+- **Strict Multi-Tenant Isolation**: Merchants can only access and manage their own products, orders, customers, and revenue.
+- **Smart Discount Engine**: Evaluates cart abandonment and inventory velocity to recommend margin-safe discounts.
+- **What-If Revenue Simulator**: Models projected orders, customer savings, and merchant basket uplift.
 - **1-Click Campaign Approval**: Merchants can review, approve, or reject AI discount strategies.
-
-### 5. Razorpay Payments & Failure Recovery
-- Server-side Razorpay Test Gateway integration (`/api/razorpay/create-order` & `/api/razorpay/verify-payment`).
-- Atomic stock decrements upon verified payment.
-- Failure simulation and recovery: preserves items in cart if payment fails or is aborted.
-
-### 6. Strict Tenant Isolation & Refresh Persistence
-- Bearer JWT tokens cryptographically encode user role and `merchant_id`.
-- Merchants can only query and mutate their own store products, orders, and customer lists.
-- Refreshing the page or switching tabs reliably preserves user identity without account switching.
 
 ---
 
@@ -109,7 +103,7 @@ $$\text{Customer Goal} \longrightarrow \text{AI Intent \& Vision} \longrightarro
 | **Backend** | Node.js, Express | RESTful APIs, Session resolution, Multimodal orchestration |
 | **Database** | SQLite (`node:sqlite` / `DatabaseSync`) | Relational persistence for products, carts, orders, and audits |
 | **Payments** | Razorpay SDK (Test Mode) | Order creation, webhook/signature verification |
-| **Auth** | JWT (`jsonwebtoken`), Bcrypt | Refresh-persistent session management & password hashing |
+| **Auth** | JWT (`jsonwebtoken`), PBKDF2 / SHA-256 | Refresh-persistent session management & password hashing |
 | **Voice / Vision** | Web Speech API & Visual Attribute Extraction | Speech-to-text transcription & image attribute parsing |
 
 ---
@@ -195,6 +189,10 @@ The database automatically seeds safe starter accounts on startup:
 - `POST /api/cart/items` — Add specific product by exact `product_id`.
 - `POST /api/cart/add-bundle` — Add entire bundle of product IDs in one atomic call.
 - `DELETE /api/cart/:customerId/items/:itemId` — Remove item from cart.
+- `GET /api/checkout/address/:customerId` — Retrieve saved delivery address.
+- `POST /api/checkout/address` — Save delivery address.
+- `POST /api/checkout/calculate-total` — Authoritative server-side price calculation.
+- `POST /api/checkout/place-order` — Place Cash on Delivery (COD) order.
 
 ### 💳 Razorpay Payments
 - `POST /api/razorpay/create-order` — Create Razorpay order with server-verified amounts.
@@ -205,32 +203,43 @@ The database automatically seeds safe starter accounts on startup:
 - `GET /api/merchant/products` — Retrieve merchant-owned catalog.
 - `POST /api/merchant/products` — Add product with server-enforced `merchant_id`.
 - `GET /api/merchant/orders` — View merchant-specific orders and buyer details.
+- `GET /api/merchant/insights` — Real revenue insights and paid order statistics.
 - `GET /api/merchant/smart-discounts` — AI discount recommendations and conversion simulation curves.
 - `POST /api/merchant/campaigns/approve` — Approve and activate recommended discount campaign.
-- `GET /api/merchant/innovation-lab` — AI readiness score, intent signals, and basket builder prototypes.
 
 ---
 
 ## 🧪 Automated Verification Suite
 
-Run `npm test` inside `backend/` or `frontend/` to execute the end-to-end system test suite:
+Run `node test.js` inside `backend/` to execute the end-to-end system test suite:
 
 ```text
-=== RUNNING REVENUE PILOT AI VERIFICATION SUITE ===
+=== RUNNING REVENUE PILOT AI COMPLETE VERIFICATION SUITE ===
 
 [1] Health Check: ✓ PASS
 [2] Merchant Login: ✓ PASS
 [3] Customer Login: ✓ PASS
 [4] Session Persistence (/api/auth/me): ✓ PASS
-[5] Merchant Products Isolation: ✓ PASS (6 products)
-[6] Voice Shopping Assistant: ✓ PASS
-[7] Vision Attribute Search: ✓ PASS
-[8] Positional Memory Grounding: ✓ PASS
-[9] Razorpay Order Creation: ✓ PASS
-[10] Payment Verification & Inventory: ✓ PASS
-[11] Smart Discount Decision Engine: ✓ PASS
+[5] Merchant Products Isolation: ✓ PASS
+[6] Delivery Address Validation & Storage: ✓ PASS
+[7] Authoritative Price Calculation: ✓ PASS
+[8] Cash on Delivery Order Creation: ✓ PASS
+[9] Razorpay Order Creation (UPI): ✓ PASS
+[10] Razorpay Payment Verification & Paid Status: ✓ PASS
+[11] Payment Failure Cart Safety: ✓ PASS
+[12] Customer Order History: ✓ PASS
+[13] Merchant Real Database Revenue Tracking: ✓ PASS
+[14] Voice Shopping Assistant: ✓ PASS
+[15A] Vision TEST 1 (Cake Image Analysis & Product Ranking): ✓ PASS
+[15B] Vision TEST 2 (Shoe Image Analysis & Matching): ✓ PASS
+[15C] Vision TEST 3 (Watch Out-Of-Catalog Grounded Fallback): ✓ PASS
+[15D] Vision TEST 4 (Police Vehicle Strict Grounding Fallback): ✓ PASS
+[15E] Vision TEST 5 (Image + Text Budget Bound): ✓ PASS
+[15F] Multi-Turn Grounding ("Add that one" exact item addition): ✓ PASS
+[16] Smart Discount Decision Engine: ✓ PASS
+[17] AI Budget Constraint Safety: ✓ PASS
 
-=== ALL 11 VERIFICATION CHECKS COMPLETED SUCCESSFULLY ===
+=== ALL VERIFICATION CHECKS COMPLETED SUCCESSFULLY ===
 ```
 
 ---
@@ -247,7 +256,7 @@ ai-ecommerce/
 │   ├── server.js               # Express API routes & multimodal chat handler
 │   ├── db.js                   # SQLite schema, multi-tenant tables, & seed data
 │   ├── agentTools.js           # Catalog search, basket builder, & cart helpers
-│   ├── auth_node.js            # JWT verification & password hashing
+│   ├── auth.js                 # JWT verification & password hashing
 │   ├── test.js                 # Consolidated system verification test suite
 │   └── package.json            # Backend dependencies & npm scripts
 └── frontend/
@@ -263,6 +272,7 @@ ai-ecommerce/
         └── components/
             ├── CustomerPortal.jsx    # Multimodal AI Shopping Assistant (Voice/Vision)
             ├── MerchantPortal.jsx    # Merchant Dashboard & Innovation Lab
+            ├── CheckoutModal.jsx     # Real-world Checkout & Delivery Address Modal
             ├── CustomerOrdersView.jsx# Customer order history & tracking
             ├── CartDrawer.jsx        # Shopping cart slide-out drawer
             ├── AuditTrailDrawer.jsx  # Live AI audit logs drawer
@@ -278,3 +288,4 @@ ai-ecommerce/
 ## 📄 License
 
 MIT License. Developed for the **Razorpay AI Commerce Innovation Challenge 2026**.
+
