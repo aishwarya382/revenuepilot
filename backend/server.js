@@ -1501,8 +1501,8 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
     const itemText = intent.searchQuery ? `'${intent.searchQuery}'` : (hasImage ? `'${visualAttributes?.product_type || 'Uploaded Image'}'` : `'${userMessage}'`);
 
     const noMatchMessage = hasImage
-      ? `I analyzed your image and identified:\n• **${visualAttributes?.product_type || 'Visual item'}**\n• **${visualAttributes?.style || 'Style'}**\n• **${visualAttributes?.features || 'Attributes'}**\n\nI couldn't find a close match in this merchant's catalog${budgetText}. All recommendations are strictly grounded in live inventory.`
-      : `I couldn't find a close match in this store's catalog for ${itemText}${budgetText}. All recommendations are strictly grounded in verified inventory.`;
+      ? `I identified the image as **${visualAttributes?.product_type || 'this product'}**. I couldn't find a relevant match in the current catalog.\n\nAll recommendations are strictly grounded in verified merchant inventory.`
+      : `I couldn't find a relevant match in the current catalog for ${itemText}${budgetText}. All recommendations are strictly grounded in verified inventory.`;
 
     return res.json({
       intent: `Search: ${itemText}`,
