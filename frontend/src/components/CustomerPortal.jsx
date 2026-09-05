@@ -90,7 +90,10 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
 
   // Multimodal State: Voice Recognition
   const [isListening, setIsListening] = useState(false);
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
+  const [transcriptPreview, setTranscriptPreview] = useState('');
   const recognitionRef = useRef(null);
+  const mediaStreamRef = useRef(null);
 
   // System Notification
   const [notification, setNotification] = useState(null);
@@ -123,6 +126,13 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
           // ignore abort error
         }
       }
+      if (mediaStreamRef.current) {
+        try {
+          mediaStreamRef.current.getTracks().forEach(track => track.stop());
+        } catch {
+          // ignore
+        }
+      }
     };
   }, []);
 
@@ -132,53 +142,91 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
   };
 
   // ==========================================
-  // 1. VOICE SHOPPING (WEB SPEECH API)
+  // 1. VOICE SHOPPING (WEB SPEECH API + MIC ACCESS)
   // ==========================================
-  const startListening = () => {
+  const startListening = async () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
+    // Prompt for microphone permissions if getUserMedia is supported
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaStreamRef.current = stream;
+      } catch (micErr) {
+        console.warn('Microphone permission request:', micErr);
+        if (micErr.name === 'NotAllowedError' || micErr.name === 'PermissionDeniedError') {
+          showNotification('Microphone access was blocked. Please enable microphone permissions in your browser or choose a voice prompt.', 'error');
+          setShowVoiceModal(true);
+          return;
+        }
+      }
+    }
+
     if (!SpeechRecognition) {
-      showNotification('Speech recognition is not supported in this browser. Please use Chrome/Edge or type your request.', 'error');
+      showNotification('Speech recognition is not supported in this browser. Opening Voice Prompt Assistant.', 'error');
+      setShowVoiceModal(true);
       return;
     }
 
     try {
       if (recognitionRef.current) {
-        recognitionRef.current.abort();
+        try { recognitionRef.current.abort(); } catch { /* ignore */ }
       }
 
       const recognition = new SpeechRecognition();
       recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = 'en-IN'; // Default to Indian English for rupee context & accents
+      recognition.interimResults = true;
+      recognition.lang = navigator.language || 'en-US';
 
       recognition.onstart = () => {
         setIsListening(true);
+        setTranscriptPreview('');
       };
 
       recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        setIsListening(false);
-        if (transcript && transcript.trim()) {
-          // Send immediately with VOICE modality badge
-          handleSendMessage({ customText: transcript, modality: 'VOICE' });
+        let currentTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          currentTranscript += event.results[i][0].transcript;
+        }
+
+        if (currentTranscript.trim()) {
+          setTranscriptPreview(currentTranscript);
+          setInputMessage(currentTranscript);
+        }
+
+        const lastResult = event.results[event.results.length - 1];
+        if (lastResult.isFinal) {
+          const finalTranscript = lastResult[0].transcript.trim();
+          if (finalTranscript) {
+            stopListening();
+            handleSendMessage({ customText: finalTranscript, modality: 'VOICE' });
+          }
         }
       };
 
       recognition.onerror = (event) => {
-        setIsListening(false);
         console.warn('Speech recognition event error:', event.error);
+        stopListening();
         if (event.error === 'not-allowed' || event.error === 'permission-denied') {
           showNotification('Microphone access was denied. Please allow microphone permissions in browser settings.', 'error');
-        } else if (event.error === 'no-speech') {
-          showNotification("I couldn't hear that clearly. Please try speaking again or type your request.", 'error');
-        } else {
-          showNotification(`Speech recognition issue (${event.error}). Please try again or type.`, 'error');
+          setShowVoiceModal(true);
+        } else if (event.error === 'network') {
+          showNotification('Voice speech recognition network issue. Opening Voice Assistant options.', 'error');
+          setShowVoiceModal(true);
+        } else if (event.error !== 'no-speech') {
+          showNotification(`Voice recognition notice (${event.error}). Opening Voice Assistant.`, 'error');
+          setShowVoiceModal(true);
         }
       };
 
       recognition.onend = () => {
         setIsListening(false);
+        if (mediaStreamRef.current) {
+          try {
+            mediaStreamRef.current.getTracks().forEach(track => track.stop());
+          } catch { /* ignore */ }
+          mediaStreamRef.current = null;
+        }
       };
 
       recognitionRef.current = recognition;
@@ -186,7 +234,8 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
     } catch (err) {
       console.error('Failed to start voice recognition:', err);
       setIsListening(false);
-      showNotification('Could not initialize microphone. Please check permissions.', 'error');
+      showNotification('Could not start microphone. Opening Voice Assistant.', 'error');
+      setShowVoiceModal(true);
     }
   };
 
@@ -197,6 +246,12 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       } catch {
         // ignore stop error
       }
+    }
+    if (mediaStreamRef.current) {
+      try {
+        mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      } catch { /* ignore */ }
+      mediaStreamRef.current = null;
     }
     setIsListening(false);
   };
@@ -517,23 +572,75 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
               </div>
             )}
 
-            {/* Live Listening Indicator */}
+            {/* Live Listening Indicator & Waveform Bar */}
             {isListening && (
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px',
+                justifyContent: 'space-between',
                 background: '#fef2f2',
-                border: '1px solid #fecaca',
-                padding: '6px 12px',
-                borderRadius: '10px',
-                marginBottom: '8px',
-                color: '#dc2626',
-                fontSize: '0.8rem',
-                fontWeight: 700
+                border: '1.5px solid #fecaca',
+                padding: '10px 14px',
+                borderRadius: '14px',
+                marginBottom: '10px',
+                animation: 'pulse 1.5s infinite'
               }}>
-                <span className="pulse-glow" style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }}></span>
-                Listening to your voice... Speak your request now (e.g. "I need black running shoes under ₹4,000")
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{
+                    width: '12px',
+                    height: '12px',
+                    borderRadius: '50%',
+                    background: '#dc2626',
+                    boxShadow: '0 0 10px rgba(220, 38, 38, 0.7)'
+                  }}></div>
+                  <div style={{ textAlign: 'left' }}>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 800, color: '#dc2626' }}>
+                      Listening to your voice...
+                    </div>
+                    <div style={{ fontSize: '0.74rem', color: '#7f1d1d', fontStyle: 'italic' }}>
+                      {transcriptPreview ? `"${transcriptPreview}"` : "Speak now (e.g., 'Find chocolate cake under ₹1000')..."}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {transcriptPreview && (
+                    <button
+                      onClick={() => {
+                        const t = transcriptPreview;
+                        stopListening();
+                        handleSendMessage({ customText: t, modality: 'VOICE' });
+                      }}
+                      style={{
+                        background: '#dc2626',
+                        color: '#ffffff',
+                        border: 'none',
+                        padding: '5px 12px',
+                        borderRadius: '8px',
+                        fontSize: '0.75rem',
+                        fontWeight: 700,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Send Spoken Query
+                    </button>
+                  )}
+                  <button
+                    onClick={stopListening}
+                    style={{
+                      background: '#ffffff',
+                      color: '#475569',
+                      border: '1px solid #cbd5e1',
+                      padding: '5px 10px',
+                      borderRadius: '8px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1495,6 +1602,101 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
         </div>
       )}
 
+      {/* VOICE ASSISTANT & PERMISSION MODAL */}
+      {showVoiceModal && (
+        <div className="modal-overlay" onClick={() => setShowVoiceModal(false)}>
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '540px', padding: '28px', background: '#ffffff', borderRadius: '24px' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: '#fef2f2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Mic size={22} color="#dc2626" />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a' }}>Voice Shopping Assistant</h3>
+                  <p style={{ fontSize: '0.75rem', color: '#64748b' }}>Speak naturally or choose a spoken voice prompt below</p>
+                </div>
+              </div>
+              <button onClick={() => setShowVoiceModal(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontWeight: 700 }}>✕</button>
+            </div>
+
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '16px', marginBottom: '20px' }}>
+              <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#0f172a', marginBottom: '8px' }}>
+                🎙️ How to enable live microphone in your browser:
+              </div>
+              <ul style={{ fontSize: '0.75rem', color: '#475569', lineHeight: 1.5, paddingLeft: '18px', margin: 0 }}>
+                <li>Click the <strong>Lock / Settings</strong> icon on the left of your browser address bar.</li>
+                <li>Set <strong>Microphone</strong> to <strong>Allow</strong>.</li>
+                <li>Ensure your system microphone is plugged in and unmuted.</li>
+              </ul>
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#7c3aed', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '10px' }}>
+                ⚡ Or Select Instant Spoken Voice Queries:
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {[
+                  "Find me a chocolate birthday cake under ₹1,000",
+                  "I need black running shoes under ₹4,000",
+                  "Add vanilla cake to my cart",
+                  "Remove all cakes from my cart",
+                  "Show me party accessories and candles",
+                  "What is your refund and return policy?"
+                ].map((voicePrompt, pIdx) => (
+                  <button
+                    key={pIdx}
+                    onClick={() => {
+                      setShowVoiceModal(false);
+                      handleSendMessage({ customText: voicePrompt, modality: 'VOICE' });
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      background: '#ffffff',
+                      border: '1px solid #e2e8f0',
+                      padding: '10px 14px',
+                      borderRadius: '12px',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      color: '#0f172a',
+                      transition: 'all 0.15s ease'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = '#7c3aed';
+                      e.currentTarget.style.background = '#f5f3ff';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = '#e2e8f0';
+                      e.currentTarget.style.background = '#ffffff';
+                    }}
+                  >
+                    <span style={{ fontSize: '1.1rem' }}>🎙️</span>
+                    <span style={{ flex: 1 }}>"{voicePrompt}"</span>
+                    <span style={{ fontSize: '0.7rem', color: '#7c3aed', fontWeight: 700 }}>Speak & Send ➔</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => {
+                  setShowVoiceModal(false);
+                  startListening();
+                }}
+                className="btn-primary"
+                style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                <Mic size={15} /> Try Microphone Again
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* RAZORPAY CHECKOUT MODAL */}
       {checkoutOrder && (
         <RazorpayModal
@@ -1516,3 +1718,4 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
     </div>
   );
 }
+
