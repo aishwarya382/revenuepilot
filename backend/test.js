@@ -248,7 +248,7 @@ async function runSystemVerification() {
     testF.data.ai_message.includes("couldn't find a matching product in this store");
   console.log('[15F] Vision TEST F (Out-of-Catalog Product -> Grounded Fallback):', testFPass ? '✓ PASS' : '✗ FAIL');
 
-  // TEST G: STEP 8 FALLBACK CHECK - Unrelated non-product image -> "Sorry, I couldn't understand the image."
+  // TEST G: STEP 8 FALLBACK CHECK - Unrelated non-product image -> "I couldn't confidently understand the image."
   const testG = await request('/api/chat', 'POST', {
     image_name: 'random_scenery.jpg',
     image_data: nonProductDataUrl,
@@ -257,8 +257,8 @@ async function runSystemVerification() {
   }, customerToken);
   const testGPass = testG.status === 200 &&
     testG.data.products?.length === 0 &&
-    testG.data.ai_message === "Sorry, I couldn't understand the image.";
-  console.log('[15G] Vision TEST G (Step 8 Fallback Safety -> Exact "Sorry, I couldn\'t understand the image."):', testGPass ? '✓ PASS' : '✗ FAIL');
+    testG.data.ai_message === "I couldn't confidently understand the image.";
+  console.log('[15G] Vision TEST G (Step 8 Fallback Safety -> Exact "I couldn\'t confidently understand the image."):', testGPass ? '✓ PASS' : '✗ FAIL');
 
   // TEST H: Direct Add to Cart with exact product_id (without re-running vision AI)
   const productToDirectAdd = testE.data.primary_product || testE.data.products[0];
