@@ -3,11 +3,14 @@ const cors = require('cors');
 const Razorpay = require('razorpay');
 const { db, logAudit } = require('./db');
 const { AgentTools } = require('./agentTools');
+const { router: notificationsRouter, emitToMerchant, emitToCustomer } = require('./notifications');
 const { hashPassword, verifyPassword, createAccessToken, verifyAccessToken } = require('./auth');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+// Mount notifications SSE router
+app.use('/api', notificationsRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -2537,6 +2540,9 @@ app.post('/api/merchant/products', (req, res) => {
   logAudit('Merchant', merchant.merchant_id, 'Product Created', `Published new product '${name}' at ₹${price}`, { product_id: id, name, price, merchant_id: merchant.merchant_id });
 
   const created = db.prepare('SELECT * FROM products WHERE id = ?').get(id);
+  // Emit real-time event to all customers and merchant
+  emitToMerchant(merchant.merchant_id, { type: 'product_created', product: created });
+  emitToCustomer('all', { type: 'product_created', product: created }); // 'all' placeholder for broadcast to all customers
   res.status(201).json({ ...created, product_id: created.id, image: created.image_url });
 });
 
@@ -2574,7 +2580,11 @@ app.put('/api/merchant/products/:id', (req, res) => {
     merchant.merchant_id
   );
 
+  // Emit update event
   const updated = db.prepare('SELECT * FROM products WHERE id = ?').get(productId);
+  // Notify merchant and all customers of the updated product
+  emitToMerchant(merchant.merchant_id, { type: 'product_updated', product: updated });
+  emitToCustomer('all', { type: 'product_updated', product: updated });
   res.json({ ...updated, product_id: updated.id, image: updated.image_url });
 });
 
@@ -2596,6 +2606,9 @@ app.delete('/api/merchant/products/:id', (req, res) => {
   }
 
   db.prepare('DELETE FROM products WHERE id = ? AND merchant_id = ?').run(productId, merchant.merchant_id);
+  // Notify merchant and all customers of the deleted product
+  emitToMerchant(merchant.merchant_id, { type: 'product_deleted', product_id: productId });
+  emitToCustomer('all', { type: 'product_deleted', product_id: productId });
   res.json({ success: true, message: 'Product deleted from your store catalog.' });
 });
 

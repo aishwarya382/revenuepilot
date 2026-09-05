@@ -29,7 +29,8 @@ db.exec(`
     image_url TEXT,
     status TEXT NOT NULL DEFAULT 'published',
     related_products TEXT,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS carts (
@@ -145,7 +146,9 @@ db.exec(`
   `);
 
 // Clean legacy data & ensure columns
-try { db.exec("ALTER TABLE users ADD COLUMN merchant_id TEXT"); } catch (_) { }
+  try { db.exec("ALTER TABLE users ADD COLUMN merchant_id TEXT"); } catch (_) { }
+  // Ensure products table has updated_at column
+  try { db.exec("ALTER TABLE products ADD COLUMN updated_at TEXT"); } catch (_) { }
 try { db.exec("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1"); } catch (_) { }
 try { db.exec("ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT 'CARD'"); } catch (_) { }
 try { db.exec("ALTER TABLE orders ADD COLUMN payment_status TEXT DEFAULT 'PENDING'"); } catch (_) { }
@@ -395,12 +398,12 @@ const seedProducts = [
 ];
 
 const insertProd = db.prepare(`
-  INSERT INTO products (id, merchant_id, merchant_name, name, category, price, stock, description, image_url, status, related_products, created_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?)
+  INSERT INTO products (id, merchant_id, merchant_name, name, category, price, stock, description, image_url, status, related_products, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?)
 `);
 
 for (const p of seedProducts) {
-  insertProd.run(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], now);
+  insertProd.run(p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], now, now);
 }
 
 // Log audit event helper

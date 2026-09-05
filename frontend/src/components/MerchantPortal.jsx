@@ -141,6 +141,40 @@ export default function MerchantPortal({ currentUser, onAuditUpdate }) {
     fetchMerchantData();
   }, [fetchMerchantData]);
 
+  // SSE subscription for product events
+  useEffect(() => {
+    if (!merchantId) return;
+    const es = new EventSource(`http://localhost:8000/api/notifications/${merchantId}`);
+    es.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (!data || !data.type) return;
+        const { type, product, product_id } = data;
+        if (type === 'merchant') {
+          // Handle merchant-specific events
+          const event = data.event || data.type; // fallback
+        }
+        // Our emit functions send type field inside data.type, but payload includes product_created etc.
+        if (data.type === 'product_created') {
+          setProducts((prev) => [product, ...prev]);
+        } else if (data.type === 'product_updated') {
+          setProducts((prev) => prev.map(p => p.id === product.id ? product : p));
+        } else if (data.type === 'product_deleted') {
+          setProducts((prev) => prev.filter(p => p.id !== product_id));
+        }
+      } catch (err) {
+        console.error('SSE parse error', err);
+      }
+    };
+    es.onerror = (err) => {
+      console.error('SSE error', err);
+      es.close();
+    };
+    return () => {
+      es.close();
+    };
+  }, [merchantId]);
+
   const handleUploadProduct = async (e) => {
     e.preventDefault();
     if (!newProdName || !newProdCategory || !newProdPrice) return;

@@ -4,6 +4,13 @@ const router = express.Router();
 // In-memory map of active SSE connections per user ID (customer or merchant)
 const clients = {};
 
+function broadcast(data) {
+  // Send data to all connected users (customers and merchants)
+  for (const userId in clients) {
+    emitToUser(userId, data);
+  }
+}
+
 function emitToUser(userId, data) {
   const connections = clients[userId];
   if (!connections) return;
@@ -46,4 +53,4 @@ router.get('/notifications/:userId', (req, res) => {
   });
 });
 
-module.exports = { router, emitToCustomer, emitToMerchant };
+module.exports = { router, emitToCustomer, emitToMerchant, broadcast };
