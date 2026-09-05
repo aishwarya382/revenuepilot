@@ -193,6 +193,12 @@ export const AuthProvider = ({ children }) => {
     setToken(null);
   };
 
+  const switchMode = async () => {
+    const targetRole = user?.role === 'merchant' ? 'customer' : 'merchant';
+    const targetEmail = targetRole === 'merchant' ? 'merchant@revenuepilot.ai' : 'customer@revenuepilot.ai';
+    return await login(targetEmail, 'Demo@12345', targetRole);
+  };
+
   const value = {
     user,
     token,
@@ -202,7 +208,8 @@ export const AuthProvider = ({ children }) => {
     isLoading,
     login,
     signup,
-    logout
+    logout,
+    switchMode
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

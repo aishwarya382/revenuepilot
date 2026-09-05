@@ -1,7 +1,7 @@
 import React from 'react';
 import { Package, FileText, ShieldCheck, Zap, Store } from 'lucide-react';
 
-export default function Sidebar({ currentUser, activeTab, setActiveTab, onOpenAuditLog }) {
+export default function Sidebar({ currentUser, activeTab, setActiveTab, onOpenAuditLog, onSwitchMode }) {
   const isMerchant = currentUser?.role === 'merchant';
 
   return (
@@ -26,18 +26,41 @@ export default function Sidebar({ currentUser, activeTab, setActiveTab, onOpenAu
           marginBottom: '20px',
           display: 'flex',
           alignItems: 'center',
-          gap: '10px',
+          justifyContent: 'space-between',
+          gap: '8px',
           boxShadow: '0 4px 12px rgba(99, 102, 241, 0.2)'
         }}>
-          <span style={{ fontSize: '1.2rem' }}>{isMerchant ? '💼' : '🛍️'}</span>
-          <div>
-            <div style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-              {isMerchant ? 'MERCHANT MODE' : 'CUSTOMER MODE'}
-            </div>
-            <div style={{ fontSize: '0.7rem', opacity: 0.9 }}>
-              {isMerchant ? 'Catalog & Orders Control' : 'AI Shopping Assistant'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '1.2rem' }}>{isMerchant ? '💼' : '🛍️'}</span>
+            <div>
+              <div style={{ fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {isMerchant ? 'MERCHANT MODE' : 'CUSTOMER MODE'}
+              </div>
+              <div style={{ fontSize: '0.7rem', opacity: 0.9 }}>
+                {isMerchant ? 'Catalog & Orders' : 'AI Shopping Assistant'}
+              </div>
             </div>
           </div>
+          {onSwitchMode && (
+            <button
+              onClick={onSwitchMode}
+              title={`Switch to ${isMerchant ? 'Customer' : 'Merchant'} Mode`}
+              style={{
+                background: 'rgba(255, 255, 255, 0.25)',
+                border: 'none',
+                color: '#ffffff',
+                fontSize: '0.65rem',
+                fontWeight: 800,
+                padding: '4px 8px',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                textTransform: 'uppercase',
+                letterSpacing: '0.04em'
+              }}
+            >
+              Switch
+            </button>
+          )}
         </div>
 
         {/* CUSTOMER NAVIGATION */}

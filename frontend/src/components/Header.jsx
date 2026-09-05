@@ -1,8 +1,8 @@
 import React from 'react';
-import { ShoppingCart, Zap, LogOut, ShieldCheck, Package } from 'lucide-react';
+import { ShoppingCart, Zap, LogOut, ShieldCheck, Package, RefreshCw } from 'lucide-react';
 import RevenueLogo from './RevenueLogo';
 
-export default function Header({ currentUser, activeTab, setActiveTab, onOpenAuditLog, onOpenCart, cartCount = 0, onLogout }) {
+export default function Header({ currentUser, activeTab, setActiveTab, onOpenAuditLog, onOpenCart, cartCount = 0, onLogout, onSwitchMode }) {
   const isMerchant = currentUser?.role === 'merchant';
 
   return (
@@ -129,6 +129,28 @@ export default function Header({ currentUser, activeTab, setActiveTab, onOpenAud
               {isMerchant ? 'Merchant Admin' : 'Customer Account'}
             </div>
           </div>
+          {onSwitchMode && (
+            <button
+              onClick={onSwitchMode}
+              title={`Switch to ${isMerchant ? 'Customer' : 'Merchant'} Mode`}
+              style={{
+                background: '#f8fafc',
+                border: '1px solid #cbd5e1',
+                color: '#475569',
+                padding: '6px 10px',
+                borderRadius: '8px',
+                fontSize: '0.725rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}
+            >
+              <RefreshCw size={12} color="#7c3aed" />
+              <span>{isMerchant ? 'Customer Mode' : 'Merchant Mode'}</span>
+            </button>
+          )}
           <button
             onClick={onLogout}
             title="Sign Out"

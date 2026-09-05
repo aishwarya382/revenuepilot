@@ -11,7 +11,7 @@ import CartDrawer from './components/CartDrawer';
 import RazorpayModal from './components/RazorpayModal';
 
 export default function App() {
-  const { user: currentUser, token, logout, isLoading } = useAuth();
+  const { user: currentUser, token, logout, switchMode, isLoading } = useAuth();
   const [activeTab, setActiveTab] = useState('customer'); // 'customer' | 'orders' | 'merchant'
   
   // Cart & Audit States
@@ -176,6 +176,7 @@ export default function App() {
         onOpenCart={() => setIsCartOpen(true)}
         cartCount={cartData.total_items || 0}
         onLogout={handleLogout}
+        onSwitchMode={switchMode}
       />
 
       {/* Main Body Split: Left Sidebar + Right Dynamic Main View */}
@@ -189,6 +190,7 @@ export default function App() {
             setActiveTab(tab);
           }}
           onOpenAuditLog={() => setIsAuditOpen(true)}
+          onSwitchMode={switchMode}
         />
 
         <main style={{ flex: 1, background: '#f8fafc', minWidth: 0 }}>
