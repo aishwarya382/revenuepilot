@@ -132,6 +132,18 @@ db.exec(`
   );
 `);
 
+  // New bundles table for storing generated recommendation bundles
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bundles (
+      id TEXT PRIMARY KEY,
+      merchant_id TEXT NOT NULL,
+      base_product_id TEXT NOT NULL,
+      recommendation_ids TEXT, -- comma-separated product IDs
+      total_price REAL NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+
 // Clean legacy data & ensure columns
 try { db.exec("ALTER TABLE users ADD COLUMN merchant_id TEXT"); } catch (_) { }
 try { db.exec("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1"); } catch (_) { }
@@ -397,6 +409,12 @@ function logAudit(actorType, actorId, action, reason, metadata = {}, status = 'C
     INSERT INTO audit_logs (id, actor_type, actor_id, action, reason, metadata_json, status, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
+  // Ensure campaigns table has new columns for AI discount engine
+  try { db.exec("ALTER TABLE campaigns ADD COLUMN discount_percent REAL"); } catch (_) {}
+  try { db.exec("ALTER TABLE campaigns ADD COLUMN budget REAL"); } catch (_) {}
+  try { db.exec("ALTER TABLE campaigns ADD COLUMN max_transaction REAL"); } catch (_) {}
+  try { db.exec("ALTER TABLE campaigns ADD COLUMN start_at TEXT"); } catch (_) {}
+  try { db.exec("ALTER TABLE campaigns ADD COLUMN end_at TEXT"); } catch (_) {}
   stmt.run(
     `aud_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
     actorType,

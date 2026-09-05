@@ -2707,20 +2707,47 @@ app.post('/api/merchant/approve-campaign', (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const { title, action_type } = req.body;
+  const { title, action_type, discount_percent, budget, max_transaction, start_at, end_at } = req.body;
+  // Guardrails
+  if (discount_percent !== undefined && discount_percent > 15) {
+    return res.status(400).json({ error: 'Campaign rejected: discount exceeds maximum allowed limit of 15%.' });
+  }
+  if (budget !== undefined && budget > 5000) {
+    return res.status(400).json({ error: 'Campaign rejected: budget exceeds maximum allowed limit of ₹5,000.' });
+  }
+  if (max_transaction !== undefined && max_transaction > 2000) {
+    return res.status(400).json({ error: 'Campaign rejected: max transaction amount exceeds limit of ₹2,000.' });
+  }
+
   const campId = `camp_${Date.now()}`;
   const mId = merchant.merchant_id;
   const campTitle = title || `${merchant.store_name} Campaign`;
 
   db.prepare(`
-    INSERT INTO campaigns (id, merchant_id, name, type, status, expected_revenue, actual_revenue, created_at)
-    VALUES (?, ?, ?, ?, 'ACTIVE', 50000.0, 0.0, ?)
-  `).run(campId, mId, campTitle, action_type || 'PROMO', new Date().toISOString());
+    INSERT INTO campaigns (id, merchant_id, name, type, status, expected_revenue, actual_revenue, created_at, discount_percent, budget, max_transaction, start_at, end_at)
+    VALUES (?, ?, ?, ?, 'ACTIVE', 50000.0, 0.0, ?, ?, ?, ?, ?, ?)
+  `).run(
+    campId,
+    mId,
+    campTitle,
+    action_type || 'PROMO',
+    new Date().toISOString(),
+    discount_percent || null,
+    budget || null,
+    max_transaction || null,
+    start_at || null,
+    end_at || null
+  );
 
   logAudit('Merchant', mId, 'Campaign Approved', `Merchant approved campaign '${campTitle}'`, {
     campaign_id: campId,
     merchant_id: mId,
-    title: campTitle
+    title: campTitle,
+    discount_percent,
+    budget,
+    max_transaction,
+    start_at,
+    end_at
   });
 
   res.json({
