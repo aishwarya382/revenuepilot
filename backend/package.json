@@ -10,6 +10,7 @@
   "dependencies": {
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "openai": "^7.10.0",
     "razorpay": "^2.9.8"
   }
 }
