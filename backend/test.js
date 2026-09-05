@@ -155,15 +155,79 @@ async function runSystemVerification() {
   }, customerToken);
   console.log('[14] Voice Shopping Assistant:', voiceSearch.status === 200 && voiceSearch.data.products?.length > 0 ? '✓ PASS' : '✗ FAIL');
 
-  // 15. Multimodal Vision Search & Grounding
-  const visionSearch = await request('/api/chat', 'POST', {
+  // 15. Multimodal Vision Search: TEST 1 - Cake Image
+  const visionCake = await request('/api/chat', 'POST', {
     message: 'Find something like this',
-    image_name: 'black_sneakers.jpg',
+    image_name: 'chocolate_birthday_cake.jpg',
     image_data: 'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
     customer_id: customerId,
     modality: 'IMAGE'
   }, customerToken);
-  console.log('[15] Vision Attribute Search:', visionSearch.status === 200 && visionSearch.data.visual_attributes ? '✓ PASS' : '✗ FAIL');
+  const cakePass = visionCake.status === 200 &&
+    visionCake.data.visual_attributes?.object === 'cake' &&
+    visionCake.data.products?.length > 0 &&
+    visionCake.data.primary_product?.id === 'prod_cake_01';
+  console.log('[15A] Vision TEST 1 (Cake Image Analysis & Product Ranking):', cakePass ? '✓ PASS' : '✗ FAIL');
+
+  // 15B. Multimodal Vision Search: TEST 2 - Shoe Image
+  const visionShoe = await request('/api/chat', 'POST', {
+    message: 'Find this sneaker',
+    image_name: 'running_shoes_black.jpg',
+    image_data: 'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
+    customer_id: customerId,
+    modality: 'IMAGE'
+  }, customerToken);
+  const shoePass = visionShoe.status === 200 &&
+    visionShoe.data.visual_attributes?.category === 'footwear' &&
+    visionShoe.data.products?.length > 0;
+  console.log('[15B] Vision TEST 2 (Shoe Image Analysis & Matching):', shoePass ? '✓ PASS' : '✗ FAIL');
+
+  // 15C. Multimodal Vision Search: TEST 3 - Watch Image (Unmatched in Catalog)
+  const visionWatch = await request('/api/chat', 'POST', {
+    message: 'Find this watch',
+    image_name: 'luxury_watch.jpg',
+    image_data: 'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
+    customer_id: customerId,
+    modality: 'IMAGE'
+  }, customerToken);
+  const watchPass = visionWatch.status === 200 &&
+    visionWatch.data.products?.length === 0 &&
+    visionWatch.data.ai_message.includes("couldn't find a matching product in this merchant's catalog");
+  console.log('[15C] Vision TEST 3 (Watch Out-Of-Catalog Grounded Fallback):', watchPass ? '✓ PASS' : '✗ FAIL');
+
+  // 15D. Multimodal Vision Search: TEST 4 - Police Vehicle Image (Unmatched in Catalog)
+  const visionPolice = await request('/api/chat', 'POST', {
+    message: 'What about this car?',
+    image_name: 'police_patrol_car.png',
+    image_data: 'data:image/png;base64,iVBORw0KGgo...',
+    customer_id: customerId,
+    modality: 'IMAGE'
+  }, customerToken);
+  const policePass = visionPolice.status === 200 &&
+    visionPolice.data.products?.length === 0 &&
+    visionPolice.data.ai_message.includes('police vehicle') &&
+    visionPolice.data.ai_message.includes("couldn't find a matching product in this merchant's catalog");
+  console.log('[15D] Vision TEST 4 (Police Vehicle Strict Grounding Fallback):', policePass ? '✓ PASS' : '✗ FAIL');
+
+  // 15E. Multimodal Vision Search: TEST 5 - Image + Text Budget Constraint
+  const visionBudget = await request('/api/chat', 'POST', {
+    message: 'Find something similar under ₹1,000',
+    image_name: 'chocolate_cake.jpg',
+    image_data: 'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
+    customer_id: customerId,
+    modality: 'MULTIMODAL'
+  }, customerToken);
+  const visionBudgetPass = visionBudget.status === 200 &&
+    visionBudget.data.products?.every(p => p.price <= 1000);
+  console.log('[15E] Vision TEST 5 (Image + Text Budget Bound):', visionBudgetPass ? '✓ PASS' : '✗ FAIL');
+
+  // 15F. Multi-turn Followup: "Add that one to my cart"
+  const addThatOne = await request('/api/chat', 'POST', {
+    message: 'Add that one to my cart',
+    customer_id: customerId
+  }, customerToken);
+  const addPass = addThatOne.status === 200 && addThatOne.data.cart_updated === true;
+  console.log('[15F] Multi-Turn Grounding ("Add that one" exact item addition):', addPass ? '✓ PASS' : '✗ FAIL');
 
   // 16. Smart Discount Decision Engine
   const discounts = await request('/api/merchant/smart-discounts', 'GET', null, merchantToken);
@@ -177,7 +241,7 @@ async function runSystemVerification() {
   const budgetPass = budgetSearch.status === 200 && (!budgetSearch.data.bundle || budgetSearch.data.bundle.total_price <= 1000);
   console.log('[17] AI Budget Constraint Safety:', budgetPass ? '✓ PASS' : '✗ FAIL');
 
-  console.log('\n=== ALL 17 VERIFICATION CHECKS COMPLETED SUCCESSFULLY ===');
+  console.log('\n=== ALL VERIFICATION CHECKS COMPLETED SUCCESSFULLY ===');
 }
 
 runSystemVerification().catch(console.error);

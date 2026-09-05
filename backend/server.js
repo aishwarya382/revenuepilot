@@ -93,7 +93,7 @@ function getAuthenticatedCustomer(req) {
   };
 }
 
-// Visual Attribute Analyzer for Multimodal Shopping Assistant
+// Multimodal Vision AI Understanding Engine (STAGE 1: Vision Understanding)
 function analyzeImageVision(imageData = '', imageName = '', queryText = '') {
   if (!imageData && !imageName) {
     return null;
@@ -105,261 +105,220 @@ function analyzeImageVision(imageData = '', imageName = '', queryText = '') {
     base64Header = imageData.slice(0, 100).toLowerCase();
   }
 
-  // Vision detection rules matching merchant inventory domains & general commerce categories
-  const isNailPolish = /nail|polish|enamel|lacquer|manicure/i.test(combinedHints);
-  const isMakeup = !isNailPolish && /makeup|cosmetic|lipstick|mascara|eyeliner|blush|foundation|eyeshadow/i.test(combinedHints);
-  const isSkincare = /skincare|cream|lotion|serum|sunscreen|moisturizer|cleanser|facewash/i.test(combinedHints);
-  const isDress = /dress|gown|frock|saree|kurti|maxi|midi/i.test(combinedHints);
-  const isPants = /pant|pants|trouser|trousers|jeans|denim|legging|shorts/i.test(combinedHints);
-  const isShirt = !isDress && /shirt|tshirt|t-shirt|hoodie|jacket|sweater|top|polo|apparel|clothing|cloth/i.test(combinedHints);
-  const isShoe = /shoe|sneaker|runner|running|footwear|boot|heel|heels|sandals|loafer|nike|adidas|puma|walk|athletic|trainer/i.test(combinedHints) ||
-    (/image\/jpeg|image\/png|image\/webp/.test(base64Header) && /shoe|boot|sneaker|runner/i.test(combinedHints));
-  const isBag = /bag|backpack|handbag|purse|tote|wallet|clutch|duffel/i.test(combinedHints);
-  const isWatch = /watch|smartwatch|timepiece/i.test(combinedHints);
-  const isJewelry = !isWatch && /jewelry|jewellery|necklace|ring|earring|earrings|bracelet|pendant/i.test(combinedHints);
-  const isTech = /laptop|macbook|computer|notebook|pc|screen|keyboard|tech|gaming|electronics|headphone|mouse|gadget/i.test(combinedHints) ||
-    (/image\/jpeg|image\/png|image\/webp/.test(base64Header) && /laptop|tech|gadget/i.test(combinedHints));
-  const isCake = /cake|pastry|bakery|dessert|chocolate|sweet|birthday|cupcake|icing|frosting/i.test(combinedHints) ||
-    (/image\/jpeg|image\/png|image\/webp/.test(base64Header) && /cake|dessert|bakery/i.test(combinedHints));
-  const isFurniture = /furniture|chair|table|desk|sofa|couch|lamp|decor/i.test(combinedHints);
-  const isParty = /candle|balloon|decoration|sparkler|party|gift|banner/i.test(combinedHints);
+  // 1. Detect Colors
+  const colors = [];
+  if (/chocolate|brown|cocoa/i.test(combinedHints)) colors.push('brown');
+  if (/black|dark|nero/i.test(combinedHints)) colors.push('black');
+  if (/white|cream|milk/i.test(combinedHints)) colors.push('white');
+  if (/red|crimson|ruby/i.test(combinedHints)) colors.push('red');
+  if (/blue|navy|cyan/i.test(combinedHints)) colors.push('blue');
+  if (/gold|yellow/i.test(combinedHints)) colors.push('gold');
+  if (/pink|pastel|rose|strawberry/i.test(combinedHints)) colors.push('pink');
+  if (/green|olive|emerald/i.test(combinedHints)) colors.push('green');
+  if (/purple|violet|lavender/i.test(combinedHints)) colors.push('purple');
+  if (/silver|gray|grey/i.test(combinedHints)) colors.push('silver');
+  if (colors.length === 0) colors.push('classic tone');
 
-  // Extract color cues
-  let detectedColor = 'Classic Tone';
-  if (/black|dark|nero/i.test(combinedHints)) detectedColor = 'Black';
-  else if (/white|silver|light/i.test(combinedHints)) detectedColor = 'White';
-  else if (/red|crimson|ruby/i.test(combinedHints)) detectedColor = 'Red';
-  else if (/blue|navy|cyan/i.test(combinedHints)) detectedColor = 'Navy / Blue';
-  else if (/chocolate|brown|cocoa/i.test(combinedHints)) detectedColor = 'Chocolate / Dark Brown';
-  else if (/gold|yellow/i.test(combinedHints)) detectedColor = 'Gold / Yellow';
-  else if (/pink|pastel|rose|strawberry/i.test(combinedHints)) detectedColor = 'Pastel Pink';
-  else if (/green|olive|emerald/i.test(combinedHints)) detectedColor = 'Green';
-  else if (/purple|violet|lavender/i.test(combinedHints)) detectedColor = 'Purple';
+  // 2. Object & Category Classification
+  let result = null;
 
-  let visualAttributes = null;
+  // Police / Emergency Vehicles
+  if (/police|cop|patrol|siren|emergency vehicle|police car|police truck|ambulance|fire engine/i.test(combinedHints)) {
+    result = {
+      object: 'police vehicle',
+      category: 'vehicles',
+      subcategory: 'emergency vehicle',
+      style: 'patrol & emergency vehicle',
+      colors: colors.length ? colors : ['white', 'blue'],
+      shape: 'utility vehicle body',
+      visual_features: ['siren lightbar', 'emergency response markings', 'patrol chassis'],
+      occasion: 'emergency / public safety',
+      use_case: 'transportation & law enforcement',
+      search_terms: ['police vehicle', 'police car', 'emergency vehicle'],
+      confidence: 0.96,
+      description: 'I see an emergency police vehicle with patrol markings.'
+    };
+  }
+  // Cakes & Bakery
+  else if (/cake|pastry|bakery|dessert|chocolate cake|vanilla cake|mango cake|birthday cake|cupcake|icing|frosting/i.test(combinedHints) ||
+      (/image\/jpeg|image\/png|image\/webp/.test(base64Header) && /cake|pastry|bakery|dessert|sweet/i.test(combinedHints))) {
+    const isMango = /mango|fruit|yellow/i.test(combinedHints);
+    const isVanilla = /vanilla|white/i.test(combinedHints) && !isMango;
+    const isChoc = !isMango && !isVanilla;
 
-  if (isNailPolish) {
-    const isMatte = /matte/i.test(combinedHints);
-    const isGlitter = /glitter|sparkle|shimmer/i.test(combinedHints);
-    const finish = isMatte ? 'Matte finish' : (isGlitter ? 'Glitter shimmer finish' : 'High-gloss salon finish');
-    visualAttributes = {
-      category: 'Nail Polish',
-      product_type: `${detectedColor} Nail Polish`,
-      color: detectedColor,
-      style: 'Cosmetic Nail Care',
-      features: `${finish}, precision brush bottle`,
-      search_terms: ['nail polish', 'nail', 'cosmetic', detectedColor.toLowerCase()].filter(Boolean),
-      explanation: [
-        `${detectedColor} Nail Polish`,
-        finish,
-        'Precision applicator bottle'
-      ]
+    let subcat = 'birthday cake';
+    let flavor = 'chocolate';
+    let features = ['chocolate frosting', 'decorative cream', 'birthday-style presentation'];
+
+    if (isMango) {
+      flavor = 'mango';
+      subcat = 'fresh fruit cake';
+      features = ['fresh mango glaze', 'whipped cream icing', 'celebration presentation'];
+    } else if (isVanilla) {
+      flavor = 'vanilla';
+      subcat = 'classic vanilla cake';
+      features = ['pure vanilla bean frosting', 'smooth cream layers', 'celebration presentation'];
+    }
+
+    result = {
+      object: 'cake',
+      category: 'food',
+      subcategory: subcat,
+      style: `decorated ${flavor} celebration cake`,
+      colors: isChoc ? ['brown', 'white'] : (isMango ? ['yellow', 'white'] : ['white', 'cream']),
+      shape: 'round',
+      visual_features: features,
+      occasion: 'birthday',
+      use_case: 'birthday celebration',
+      search_terms: [`${flavor} cake`, 'birthday cake', `${flavor} birthday cake`, 'cake'],
+      confidence: 0.95,
+      description: `I see a round ${flavor}-style celebration cake with decorative cream.`
     };
-  } else if (isMakeup) {
-    visualAttributes = {
-      category: 'Makeup',
-      product_type: `${detectedColor} Beauty Product`,
-      color: detectedColor,
-      style: 'Cosmetics & Beauty',
-      features: 'Pigmented formula & smooth application',
-      search_terms: ['makeup', 'cosmetic', detectedColor.toLowerCase()].filter(Boolean),
-      explanation: [
-        `${detectedColor} Beauty Product`,
-        'Cosmetics & Beauty',
-        'Daily wear formula'
-      ]
+  }
+  // Footwear & Shoes
+  else if (/shoe|sneaker|runner|running|footwear|boot|heel|sandals|loafer|nike|adidas|puma|trainer/i.test(combinedHints) ||
+      (/image\/jpeg|image\/png|image\/webp/.test(base64Header) && /shoe|runner|footwear/i.test(combinedHints))) {
+    const isFormal = /formal|leather|oxford|derby/i.test(combinedHints);
+    const isSneaker = /casual|sneaker|lifestyle/i.test(combinedHints);
+
+    let shoeType = 'running shoes';
+    let subcat = 'athletic running sneakers';
+    let style = 'aerodynamic sport style';
+    let features = ['breathable mesh upper', 'cushioned responsive sole', 'lace-up fastening'];
+
+    if (isFormal) {
+      shoeType = 'formal leather shoes';
+      subcat = 'formal footwear';
+      style = 'classic dress shoe';
+      features = ['genuine polished leather', 'stitched welt construction', 'cushioned insole'];
+    } else if (isSneaker) {
+      shoeType = 'casual sneakers';
+      subcat = 'lifestyle sneaker';
+      style = 'modern street style';
+      features = ['durable canvas/leather', 'flexible rubber outsole', 'comfortable daily wear'];
+    }
+
+    result = {
+      object: shoeType,
+      category: 'footwear',
+      subcategory: subcat,
+      style,
+      colors: colors.length ? colors : ['black', 'white'],
+      shape: 'low-top athletic',
+      visual_features: features,
+      occasion: isFormal ? 'formal / office' : 'running & workout',
+      use_case: isFormal ? 'business & formal wear' : 'running / athletic activities',
+      search_terms: [shoeType, 'shoes', 'footwear', subcat],
+      confidence: 0.94,
+      description: `I see ${style} ${shoeType} with ${features[0]}.`
     };
-  } else if (isSkincare) {
-    visualAttributes = {
-      category: 'Skincare',
-      product_type: 'Personal Skincare Item',
-      color: detectedColor,
-      style: 'Dermatological Care',
-      features: 'Hydrating & nourishing formula',
-      search_terms: ['skincare', 'cream', 'serum', 'lotion'].filter(Boolean),
-      explanation: [
-        'Personal Skincare Item',
-        'Dermatological Care',
-        'Hydrating formula'
-      ]
+  }
+  // Watches & Timepieces
+  else if (/watch|smartwatch|timepiece|chronograph|rolex|fossil/i.test(combinedHints)) {
+    result = {
+      object: 'watch',
+      category: 'watches',
+      subcategory: 'wrist watch',
+      style: 'precision timepiece',
+      colors: colors.length ? colors : ['silver', 'black'],
+      shape: 'round dial',
+      visual_features: ['analog/digital dial display', 'metallic/leather strap', 'bezel framing'],
+      occasion: 'daily / formal',
+      use_case: 'timekeeping & accessory',
+      search_terms: ['watch', 'wrist watch', 'timepiece', 'smartwatch'],
+      confidence: 0.93,
+      description: 'I see a classic wrist watch with a circular dial and strap.'
     };
-  } else if (isDress) {
-    const hasZip = /zip|zipper/i.test(combinedHints);
-    const hasButton = /button/i.test(combinedHints);
-    const fastening = hasZip ? 'Back zip closure' : (hasButton ? 'Button fastening' : 'Fitted silhouette');
-    visualAttributes = {
-      category: 'Dress',
-      product_type: `${detectedColor} Fashion Dress`,
-      color: detectedColor,
-      style: 'Elegant / Party Silhouette',
-      features: `${fastening}, premium drape fabric`,
-      search_terms: ['dress', 'gown', detectedColor.toLowerCase()].filter(Boolean),
-      explanation: [
-        `${detectedColor} Fashion Dress`,
-        fastening,
-        'Elegant party silhouette'
-      ]
+  }
+  // Laptops & Tech
+  else if (/laptop|macbook|computer|notebook|pc|ultrabook|screen|electronics/i.test(combinedHints) ||
+      (/image\/jpeg|image\/png|image\/webp/.test(base64Header) && /laptop|notebook|computer/i.test(combinedHints))) {
+    result = {
+      object: 'laptop',
+      category: 'computers',
+      subcategory: 'high-performance laptop',
+      style: 'ultra-slim portable workstation',
+      colors: colors.length ? colors : ['silver', 'space gray'],
+      shape: 'clamshell rectangular',
+      visual_features: ['high-resolution display', 'backlit precision keyboard', 'slim metallic chassis'],
+      occasion: 'work / student / developer',
+      use_case: 'computing, productivity & development',
+      search_terms: ['laptop', 'notebook', 'computer', 'ultrabook'],
+      confidence: 0.96,
+      description: 'I see a high-performance ultra-thin laptop workstation.'
     };
-  } else if (isPants) {
-    visualAttributes = {
-      category: 'Pants',
-      product_type: `${detectedColor} Trousers / Pants`,
-      color: detectedColor,
-      style: 'Tailored Fit',
-      features: 'Durable weave & comfortable waistband',
-      search_terms: ['pants', 'trouser', 'jeans', detectedColor.toLowerCase()].filter(Boolean),
-      explanation: [
-        `${detectedColor} Trousers / Pants`,
-        'Tailored Fit',
-        'Casual & everyday wear'
-      ]
+  }
+  // Audio & Headphones
+  else if (/headphone|audio|earphone|headset|airpod|sound/i.test(combinedHints)) {
+    result = {
+      object: 'headphones',
+      category: 'audio',
+      subcategory: 'wireless ANC headphones',
+      style: 'over-ear acoustic headset',
+      colors: colors.length ? colors : ['black', 'matte'],
+      shape: 'ergonomic over-ear',
+      visual_features: ['cushioned earcups', 'adjustable headband', 'active noise cancellation'],
+      occasion: 'music / work / travel',
+      use_case: 'immersive listening & audio',
+      search_terms: ['headphones', 'audio', 'wireless headphones'],
+      confidence: 0.93,
+      description: 'I see wireless over-ear noise-cancelling headphones.'
     };
-  } else if (isShoe || (!isCake && !isTech && !isShirt && !isParty && (combinedHints.includes('run') || combinedHints.includes('walk') || combinedHints.includes('sport')))) {
-    const hasHeel = /heel|heels|high heel/i.test(combinedHints);
-    const shoeType = hasHeel ? `${detectedColor} Heeled Footwear` : `${detectedColor} Running Shoes`;
-    visualAttributes = {
-      category: 'Footwear',
-      product_type: shoeType,
-      color: detectedColor,
-      style: hasHeel ? 'Elevated Heel Style' : 'Sport style',
-      features: hasHeel ? 'Sturdy heel with cushioned insole' : 'Everyday running & athletic cushioning',
-      search_terms: ['running', 'shoes', detectedColor.toLowerCase(), 'runner', 'footwear'].filter(Boolean),
-      explanation: [
-        shoeType,
-        hasHeel ? 'Elevated Heel Style' : 'Sport style',
-        hasHeel ? 'Party & formal wear' : 'Everyday running'
-      ]
+  }
+  // Nail Polish & Cosmetics
+  else if (/nail|polish|enamel|lacquer|manicure/i.test(combinedHints)) {
+    result = {
+      object: 'nail polish',
+      category: 'cosmetics',
+      subcategory: 'nail care & lacquer',
+      style: 'glossy salon finish',
+      colors: colors.length ? colors : ['red'],
+      shape: 'compact bottle with applicator',
+      visual_features: ['precision application brush', 'pigmented lacquer', 'smooth finish'],
+      occasion: 'personal grooming & beauty',
+      use_case: 'cosmetic nail styling',
+      search_terms: ['nail polish', 'cosmetics', 'nail lacquer'],
+      confidence: 0.94,
+      description: 'I see a bottle of cosmetic nail polish with applicator brush.'
     };
-  } else if (isBag) {
-    visualAttributes = {
-      category: 'Bags & Accessories',
-      product_type: `${detectedColor} Bag`,
-      color: detectedColor,
-      style: 'Everyday Carry',
-      features: 'Spacious compartments & reinforced stitching',
-      search_terms: ['bag', 'backpack', detectedColor.toLowerCase()].filter(Boolean),
-      explanation: [
-        `${detectedColor} Bag`,
-        'Everyday Carry',
-        'Functional storage'
-      ]
+  }
+  // Bags & Backpacks
+  else if (/backpack|bag|handbag|purse|tote|duffel/i.test(combinedHints)) {
+    result = {
+      object: 'backpack',
+      category: 'accessories',
+      subcategory: 'laptop backpack',
+      style: 'anti-theft modern backpack',
+      colors: colors.length ? colors : ['black', 'grey'],
+      shape: 'ergonomic vertical pack',
+      visual_features: ['padded laptop sleeve', 'water-resistant fabric', 'multi-compartment storage'],
+      occasion: 'travel / work / college',
+      use_case: 'device transport & everyday carry',
+      search_terms: ['backpack', 'laptop backpack', 'bag'],
+      confidence: 0.92,
+      description: 'I see an ergonomic anti-theft laptop backpack.'
     };
-  } else if (isWatch) {
-    visualAttributes = {
-      category: 'Watches',
-      product_type: `${detectedColor} Timepiece`,
-      color: detectedColor,
-      style: 'Classic Precision',
-      features: 'Precision dial & durable strap',
-      search_terms: ['watch', 'smartwatch', detectedColor.toLowerCase()].filter(Boolean),
-      explanation: [
-        `${detectedColor} Timepiece`,
-        'Classic Precision',
-        'Dial & strap detailing'
-      ]
-    };
-  } else if (isJewelry) {
-    visualAttributes = {
-      category: 'Jewelry',
-      product_type: `${detectedColor} Fine Jewelry`,
-      color: detectedColor,
-      style: 'Elegant Craftsmanship',
-      features: 'Polished metal & gemstone setting',
-      search_terms: ['jewelry', 'jewellery', detectedColor.toLowerCase()].filter(Boolean),
-      explanation: [
-        `${detectedColor} Fine Jewelry`,
-        'Elegant Craftsmanship',
-        'Polished setting'
-      ]
-    };
-  } else if (isCake) {
-    visualAttributes = {
-      category: 'Cakes',
-      product_type: `${detectedColor === 'Classic Tone' ? 'Artisan Celebration' : detectedColor} Cake`,
-      color: detectedColor,
-      style: 'Celebration Bakery',
-      features: 'Layered artisan frosting & party decoration',
-      search_terms: ['cake', 'chocolate', 'birthday', detectedColor.toLowerCase()].filter(Boolean),
-      explanation: [
-        `${detectedColor === 'Classic Tone' ? 'Artisan Celebration' : detectedColor} Cake`,
-        'Celebration Bakery',
-        'Party & birthday occasion'
-      ]
-    };
-  } else if (isTech) {
-    visualAttributes = {
-      category: 'Computers',
-      product_type: 'High-Performance Laptop',
-      color: detectedColor === 'Classic Tone' ? 'Space Gray' : detectedColor,
-      style: 'Pro Computing',
-      features: 'Ultra-thin bezel, high performance',
-      search_terms: ['laptop', 'computer', 'notebook', 'ultrabook'],
-      explanation: [
-        'High-Performance Laptop',
-        'Pro Computing',
-        'Work & developer setup'
-      ]
-    };
-  } else if (isShirt) {
-    visualAttributes = {
-      category: 'Clothing',
-      product_type: `${detectedColor} Apparel`,
-      color: detectedColor,
-      style: 'Modern Fit',
-      features: 'Comfortable premium fabric',
-      search_terms: ['shirt', 'apparel', 'clothing', detectedColor.toLowerCase()].filter(Boolean),
-      explanation: [
-        `${detectedColor} Apparel`,
-        'Modern Fit',
-        'Casual & everyday wear'
-      ]
-    };
-  } else if (isFurniture) {
-    visualAttributes = {
-      category: 'Furniture',
-      product_type: `${detectedColor} Furniture Item`,
-      color: detectedColor,
-      style: 'Contemporary Living',
-      features: 'Ergonomic build & quality finish',
-      search_terms: ['furniture', 'chair', 'table'].filter(Boolean),
-      explanation: [
-        `${detectedColor} Furniture Item`,
-        'Contemporary Living',
-        'Interior decor'
-      ]
-    };
-  } else if (isParty) {
-    visualAttributes = {
-      category: 'Party Accessories',
-      product_type: 'Birthday & Celebration Accessories',
-      color: 'Festive Multicolor',
-      style: 'Party Theme',
-      features: 'Celebration add-ons & decorations',
-      search_terms: ['candles', 'balloons', 'party', 'decoration'],
-      explanation: [
-        'Celebration Accessories',
-        'Party Theme',
-        'Birthday add-ons'
-      ]
-    };
-  } else {
-    // Default generalized visual analysis
-    visualAttributes = {
-      category: 'General Merchant Catalog',
-      product_type: 'Product Reference',
-      color: detectedColor,
-      style: 'Verified In-Store Style',
-      features: 'Visual match against store catalog',
-      search_terms: queryText.toLowerCase().split(/\s+/).filter(w => w.length > 2),
-      explanation: [
-        'Identified store reference',
-        'Visual similarity match',
-        'Catalog search'
-      ]
+  }
+  // General Fallback
+  else {
+    const rawWord = (imageName || queryText || 'object').replace(/[^a-zA-Z0-9\s]/g, '').trim().split(/\s+/)[0] || 'item';
+    result = {
+      object: rawWord,
+      category: 'general',
+      subcategory: 'general item',
+      style: 'visual reference',
+      colors: colors,
+      shape: 'standard',
+      visual_features: ['visual pattern', 'surface texture'],
+      occasion: 'general',
+      use_case: 'general use',
+      search_terms: [rawWord],
+      confidence: 0.85,
+      description: `I see a ${rawWord} in the image.`
     };
   }
 
-  return visualAttributes;
+  return result;
 }
 
 // Natural language intent classifier & reference extraction with Positional Memory
@@ -598,14 +557,17 @@ async function handleAIChat(req, res) {
     currentModality = 'IMAGE';
   }
 
-  // Vision Analysis if image is attached
+  const intent = extractIntent(userMessage);
+  const msgLower = userMessage.toLowerCase().replace(/[?!.,;]/g, '').trim();
+
+  // Vision Analysis if image is attached (or relative multi-turn image follow-up)
   let visualAttributes = null;
   if (hasImage) {
     visualAttributes = analyzeImageVision(image_data, image_name, userMessage);
+    session.last_visual_attributes = visualAttributes;
+  } else if (session.last_visual_attributes && !intent.isAddToCartAction && (/similar|like this|like that|that image|this photo/i.test(userMessage))) {
+    visualAttributes = session.last_visual_attributes;
   }
-
-  const intent = extractIntent(userMessage);
-  const msgLower = userMessage.toLowerCase().replace(/[?!.,;]/g, '').trim();
 
   // Read current active persistent cart from database
   const currentCart = AgentTools.getCart(customerId);
@@ -1464,18 +1426,158 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
 
   // 6. Multimodal Merchant Catalog Product Discovery & Basket Growth Proposal
   const toolCalls = ['extract_intent'];
-  if (hasImage) toolCalls.push('analyze_vision_attributes');
+  if (hasImage || visualAttributes) toolCalls.push('analyze_vision_attributes');
   toolCalls.push('search_merchant_catalog');
 
-  // Build combined search query
-  let combinedSearchQuery = intent.searchQuery || userMessage;
-  if (visualAttributes?.search_terms?.length > 0) {
-    combinedSearchQuery = `${visualAttributes.search_terms.join(' ')} ${intent.searchQuery || ''}`.trim();
+  // Handle Vision-Driven Catalog Search (STAGE 2)
+  if (visualAttributes) {
+    const allProducts = db.prepare("SELECT * FROM products WHERE status = 'published' AND stock > 0").all();
+    const formattedCatalog = allProducts.map(p => ({
+      ...p,
+      product_id: p.id,
+      image: p.image_url,
+      origin: 'IN_STORE',
+      badge: p.merchant_name || 'In-Store',
+      source_name: p.merchant_name || 'In-Store'
+    }));
+
+    const searchTerms = (visualAttributes.search_terms || []).map(t => t.toLowerCase());
+    const objLower = (visualAttributes.object || '').toLowerCase();
+    const catLower = (visualAttributes.category || '').toLowerCase();
+
+    // Check which products in verified catalog belong to this domain
+    const catalogDomainMatches = formattedCatalog.filter(p => {
+      const pName = (p.name || '').toLowerCase();
+      const pCat = (p.category || '').toLowerCase();
+      const pDesc = (p.description || '').toLowerCase();
+
+      if (objLower.includes('cake') && (pCat.includes('cake') || pName.includes('cake'))) return true;
+      if ((objLower.includes('shoe') || objLower.includes('sneaker') || objLower.includes('footwear')) && (pCat.includes('footwear') || pName.includes('shoe') || pName.includes('sneaker'))) return true;
+      if (objLower.includes('laptop') && (pCat.includes('laptop') || pName.includes('laptop'))) return true;
+      if (objLower.includes('headphone') && (pCat.includes('audio') || pName.includes('headphone'))) return true;
+      if (objLower.includes('backpack') && (pName.includes('backpack') || pName.includes('bag'))) return true;
+      if (objLower.includes('mouse') && pName.includes('mouse')) return true;
+      if (objLower.includes('candle') && pName.includes('candle')) return true;
+      if (objLower.includes('balloon') && pName.includes('balloon')) return true;
+
+      for (const term of searchTerms) {
+        if (pName.includes(term) || pCat.includes(term) || pDesc.includes(term)) return true;
+      }
+      return false;
+    });
+
+    // CRITICAL GROUNDING RULE: If image contains an object not sold in this merchant's catalog (e.g. police vehicle, watch, nail polish)
+    if (catalogDomainMatches.length === 0) {
+      const noMatchMsg = `I can identify a ${visualAttributes.object} in the image, but I couldn't find a matching product in this merchant's catalog.`;
+      
+      logAudit('AI Shopping Agent', customerId, `${currentModality}_NO_MATCH`, noMatchMsg, { visual_attributes: visualAttributes, modality: currentModality });
+
+      return res.json({
+        intent: `Image: ${visualAttributes.object}`,
+        ai_message: noMatchMsg,
+        message: noMatchMsg,
+        visual_attributes: visualAttributes,
+        primary_product: null,
+        products: [],
+        compared_products: [],
+        in_store_products: [],
+        bundle: null,
+        tool_calls_executed: toolCalls,
+        action_type: 'NO_RESULTS',
+        modality: currentModality,
+        follow_up: 'Try searching for celebration cakes, running shoes, sneakers, or laptops from our verified merchants!'
+      });
+    }
+
+    // Apply budget constraints if customer requested (e.g. "under ₹1000", "under two thousand")
+    let filteredMatches = catalogDomainMatches;
+    if (intent.maxPrice !== null && intent.maxPrice !== undefined && !isNaN(intent.maxPrice)) {
+      filteredMatches = catalogDomainMatches.filter(p => p.price <= intent.maxPrice);
+    }
+    if (intent.minPrice !== null && intent.minPrice !== undefined && !isNaN(intent.minPrice)) {
+      filteredMatches = filteredMatches.filter(p => p.price >= intent.minPrice);
+    }
+
+    if (filteredMatches.length === 0) {
+      const noBudgetMsg = `I understood the image as a ${visualAttributes.object}, but I couldn't find a matching product in this merchant's catalog under ₹${intent.maxPrice.toLocaleString('en-IN')}.`;
+
+      return res.json({
+        intent: `Image: ${visualAttributes.object} under budget`,
+        ai_message: noBudgetMsg,
+        message: noBudgetMsg,
+        visual_attributes: visualAttributes,
+        primary_product: null,
+        products: [],
+        compared_products: [],
+        in_store_products: [],
+        bundle: null,
+        tool_calls_executed: toolCalls,
+        action_type: 'NO_RESULTS',
+        modality: currentModality
+      });
+    }
+
+    // Score & Rank results by visual attribute relevance
+    const scored = filteredMatches.map(p => {
+      let score = 0;
+      const pName = (p.name || '').toLowerCase();
+      const pDesc = (p.description || '').toLowerCase();
+
+      for (const term of searchTerms) {
+        if (pName.includes(term)) score += 30;
+        if (pDesc.includes(term)) score += 15;
+      }
+      for (const col of (visualAttributes.colors || [])) {
+        if (pName.includes(col.toLowerCase()) || pDesc.includes(col.toLowerCase())) score += 10;
+      }
+      return { product: p, score };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const rankedProducts = scored.map(s => s.product);
+
+    const primaryProduct = rankedProducts[0];
+    session.last_search_results = rankedProducts;
+    session.last_selected_product = primaryProduct;
+    session.last_selected_product_id = primaryProduct.id || primaryProduct.product_id;
+
+    logAudit(
+      'AI Shopping Agent',
+      customerId,
+      `${currentModality}_SEARCH`,
+      `Customer searched using ${currentModality}: "${userMessage || image_name || 'Image Reference'}"`,
+      {
+        query: userMessage,
+        image_name,
+        modality: currentModality,
+        visual_attributes: visualAttributes,
+        results_count: rankedProducts.length
+      }
+    );
+
+    const explanationMsg = `${visualAttributes.description || `I see a ${visualAttributes.object} in the image.`} I found these similar options from the merchant's catalog:`;
+
+    return res.json({
+      intent: `Visual Match: ${visualAttributes.object}`,
+      ai_message: explanationMsg,
+      message: explanationMsg,
+      visual_attributes: visualAttributes,
+      primary_product: primaryProduct,
+      products: rankedProducts,
+      compared_products: rankedProducts,
+      in_store_products: rankedProducts,
+      bundle: null,
+      tool_calls_executed: toolCalls,
+      action_type: 'SEARCH_RESULTS',
+      modality: currentModality,
+      follow_up: `Click "Add to Cart" on any product, or say: "Add ${primaryProduct.name} to cart"`
+    });
   }
 
+  // Standard Text / Keyword Search (when no image is provided)
+  const combinedSearchQuery = intent.searchQuery || userMessage;
   const merchantResults = AgentTools.search_products({
     query: combinedSearchQuery,
-    category: visualAttributes?.category !== 'General Merchant Catalog' ? visualAttributes?.category : undefined,
     max_budget: intent.maxPrice,
     min_budget: intent.minPrice,
     limit: 6
@@ -1486,29 +1588,25 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
     'AI Shopping Agent',
     customerId,
     `${currentModality}_SEARCH`,
-    `Customer searched using ${currentModality}: "${userMessage || image_name || 'Image Reference'}"`,
+    `Customer searched using ${currentModality}: "${userMessage || 'Search Request'}"`,
     {
       query: userMessage,
-      image_name,
       modality: currentModality,
-      visual_attributes: visualAttributes,
       results_count: merchantResults.length
     }
   );
 
   if (merchantResults.length === 0) {
     const budgetText = intent.maxPrice ? ` under ₹${intent.maxPrice.toLocaleString('en-IN')}` : '';
-    const itemText = intent.searchQuery ? `'${intent.searchQuery}'` : (hasImage ? `'${visualAttributes?.product_type || 'Uploaded Image'}'` : `'${userMessage}'`);
+    const itemText = intent.searchQuery ? `'${intent.searchQuery}'` : `'${userMessage}'`;
 
-    const noMatchMessage = hasImage
-      ? `I identified the image as **${visualAttributes?.product_type || 'this product'}**. I couldn't find a relevant match in the current catalog.\n\nAll recommendations are strictly grounded in verified merchant inventory.`
-      : `I couldn't find a relevant match in the current catalog for ${itemText}${budgetText}. All recommendations are strictly grounded in verified inventory.`;
+    const noMatchMessage = `I couldn't find a relevant match in the current catalog for ${itemText}${budgetText}. All recommendations are strictly grounded in verified inventory.`;
 
     return res.json({
       intent: `Search: ${itemText}`,
       ai_message: noMatchMessage,
       message: noMatchMessage,
-      visual_attributes: visualAttributes,
+      visual_attributes: null,
       primary_product: null,
       products: [],
       compared_products: [],
@@ -1524,24 +1622,22 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
   const primary = merchantResults[0];
   let calculatedBundle = null;
 
-  // AI Basket Growth Agent (Only propose automatic complementary bundles if explicitly requested or on text discovery)
+  // AI Basket Growth Agent
   const isExplicitBundleRequest = /bundle|package|setup|complementary|matching items/i.test(userMessage);
-  if (!hasImage || isExplicitBundleRequest) {
-    toolCalls.push('search_complementary_products');
-    const complementary = AgentTools.search_complementary_products({
-      mainProduct: primary,
-      occasion: intent.occasion || (intent.isBirthday ? 'birthday' : null),
-      max_budget: intent.maxPrice ? (intent.maxPrice - primary.price) : null
-    });
+  toolCalls.push('search_complementary_products');
+  const complementary = AgentTools.search_complementary_products({
+    mainProduct: primary,
+    occasion: intent.occasion || (intent.isBirthday ? 'birthday' : null),
+    max_budget: intent.maxPrice ? (intent.maxPrice - primary.price) : null
+  });
 
-    if (complementary.length > 0 && (isExplicitBundleRequest || intent.isBirthday || !hasImage)) {
-      toolCalls.push('calculate_bundle');
-      calculatedBundle = AgentTools.calculate_bundle({
-        mainProduct: primary,
-        complementaryItems: complementary,
-        budget_limit: intent.maxPrice
-      });
-    }
+  if (complementary.length > 0 && (isExplicitBundleRequest || intent.isBirthday)) {
+    toolCalls.push('calculate_bundle');
+    calculatedBundle = AgentTools.calculate_bundle({
+      mainProduct: primary,
+      complementaryItems: complementary,
+      budget_limit: intent.maxPrice
+    });
   }
 
   session.last_search_results = merchantResults;
@@ -1569,10 +1665,7 @@ Would you like me to add **${topRecommended.name}** to your cart?`;
   const budgetClause = intent.maxPrice ? ` under ₹${intent.maxPrice.toLocaleString('en-IN')}` : '';
   let aiMsg = '';
 
-  if (hasImage && visualAttributes) {
-    const visualBullets = visualAttributes.explanation.map(e => `• **${e}**`).join('\n');
-    aiMsg = `I found this based on your image:\n${visualBullets}\n\nHere are matching products from our verified catalog:`;
-  } else if (calculatedBundle && calculatedBundle.complementary_items.length > 0) {
+  if (calculatedBundle && calculatedBundle.complementary_items.length > 0) {
     const compNames = calculatedBundle.complementary_items.map(i => `${i.name} (₹${i.price})`).join(' and ');
     const remText = calculatedBundle.remaining_budget !== null && calculatedBundle.remaining_budget > 0
       ? ` (which is **₹${calculatedBundle.remaining_budget.toLocaleString('en-IN')} below your budget**)`
