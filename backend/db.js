@@ -140,8 +140,20 @@ try { db.exec("ALTER TABLE orders ADD COLUMN payment_status TEXT DEFAULT 'PENDIN
 try { db.exec("ALTER TABLE orders ADD COLUMN subtotal_amount REAL"); } catch (_) { }
 try { db.exec("ALTER TABLE orders ADD COLUMN discount_amount REAL DEFAULT 0"); } catch (_) { }
 try { db.exec("ALTER TABLE orders ADD COLUMN shipping_address_json TEXT"); } catch (_) { }
+// New columns for detailed order tracking
+try { db.exec("ALTER TABLE orders ADD COLUMN merchant_id TEXT"); } catch (_) { }
+try { db.exec("ALTER TABLE orders ADD COLUMN product_id TEXT"); } catch (_) { }
+try { db.exec("ALTER TABLE orders ADD COLUMN product_name TEXT"); } catch (_) { }
+try { db.exec("ALTER TABLE orders ADD COLUMN quantity INTEGER"); } catch (_) { }
+try { db.exec("ALTER TABLE orders ADD COLUMN price_at_order REAL"); } catch (_) { }
+try { db.exec("ALTER TABLE orders ADD COLUMN payment_status TEXT DEFAULT 'PENDING'"); } catch (_) { }
+try { db.exec("ALTER TABLE orders ADD COLUMN subtotal_amount REAL"); } catch (_) { }
+try { db.exec("ALTER TABLE orders ADD COLUMN discount_amount REAL DEFAULT 0"); } catch (_) { }
+try { db.exec("ALTER TABLE orders ADD COLUMN shipping_address_json TEXT"); } catch (_) { }
 
 const { hashPassword } = require('./auth');
+// Recommendation log table for tracking
+try { db.exec("CREATE TABLE IF NOT EXISTS recommendation_log (id TEXT PRIMARY KEY, session_id TEXT, original_product_id TEXT, recommended_product_id TEXT, reason TEXT, user_response TEXT CHECK(user_response IN ('accepted','rejected')), timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)"); } catch (_) {}
 const demoPasswordHash = hashPassword('Demo@12345');
 
 // Sync Seed Users with exact merchant_id bindings and hashed passwords
@@ -397,6 +409,7 @@ function logAudit(actorType, actorId, action, reason, metadata = {}, status = 'C
   );
 }
 
+const { getComplementary } = require('./recommendation_engine');
 module.exports = {
   db,
   logAudit
