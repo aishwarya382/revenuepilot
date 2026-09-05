@@ -25,7 +25,109 @@ import {
   Settings as SettingsIcon,
   CreditCard
 } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, CartesianGrid, ReferenceLine, ReferenceDot } from 'recharts';
 import RevenueLogo from './RevenueLogo';
+
+const ProductSelectDropdown = ({ products, value, onChange }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const selectedProduct = products.find(p => p.id === value) || products[0];
+
+  return (
+    <div style={{ position: 'relative', width: '100%' }}>
+      <div
+        onClick={() => setIsOpen(!isOpen)}
+        style={{
+          width: '100%',
+          padding: '8px 12px',
+          borderRadius: '8px',
+          border: '1px solid #cbd5e1',
+          background: '#ffffff',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          fontSize: '0.82rem'
+        }}
+      >
+        {selectedProduct ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {selectedProduct.image_url ? (
+              <img src={selectedProduct.image_url} alt={selectedProduct.name} style={{ width: '24px', height: '24px', borderRadius: '4px', objectFit: 'cover' }} />
+            ) : (
+              <div style={{ width: '24px', height: '24px', borderRadius: '4px', background: '#e2e8f0' }} />
+            )}
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontWeight: 700, color: '#0f172a' }}>{selectedProduct.name}</span>
+              <span style={{ fontSize: '0.7rem', color: '#64748b' }}>₹{selectedProduct.price} • Stock: {selectedProduct.stock}</span>
+            </div>
+          </div>
+        ) : (
+          <span style={{ color: '#94a3b8' }}>Select a product...</span>
+        )}
+        <span style={{ fontSize: '0.6rem', color: '#64748b' }}>▼</span>
+      </div>
+
+      {isOpen && (
+        <div style={{
+          position: 'absolute',
+          top: '100%',
+          left: 0,
+          right: 0,
+          marginTop: '4px',
+          background: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderRadius: '8px',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+          maxHeight: '220px',
+          overflowY: 'auto',
+          zIndex: 50
+        }}>
+          {products.map(p => {
+            const isOutOfStock = p.stock <= 0;
+            return (
+              <div
+                key={p.id}
+                onClick={() => {
+                  if (!isOutOfStock) {
+                    onChange(p);
+                    setIsOpen(false);
+                  }
+                }}
+                style={{
+                  padding: '8px 12px',
+                  borderBottom: '1px solid #f1f5f9',
+                  cursor: isOutOfStock ? 'not-allowed' : 'pointer',
+                  opacity: isOutOfStock ? 0.5 : 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  background: value === p.id ? '#f8fafc' : 'transparent'
+                }}
+              >
+                {p.image_url ? (
+                  <img src={p.image_url} alt={p.name} style={{ width: '32px', height: '32px', borderRadius: '6px', objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ width: '32px', height: '32px', borderRadius: '6px', background: '#e2e8f0' }} />
+                )}
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: '0.8rem', color: '#0f172a' }}>{p.name}</div>
+                  <div style={{ fontSize: '0.7rem', color: '#64748b', display: 'flex', gap: '8px' }}>
+                    <span>₹{p.price}</span>
+                    <span>•</span>
+                    <span>{p.category}</span>
+                  </div>
+                </div>
+                <div style={{ fontSize: '0.7rem', fontWeight: 700, color: isOutOfStock ? '#dc2626' : '#059669' }}>
+                  {isOutOfStock ? 'Out of Stock' : `Stock: ${p.stock}`}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
 
 export default function MerchantPortal({ currentUser, onAuditUpdate }) {
   // Enforce tenant isolation: use the merchant_id from the authenticated user only.
@@ -144,22 +246,17 @@ export default function MerchantPortal({ currentUser, onAuditUpdate }) {
   // SSE subscription for product events
   useEffect(() => {
     if (!merchantId) return;
-    const es = new EventSource(`http://localhost:8000/api/notifications/${merchantId}`);
+    const es = new EventSource(`http://localhost:8000/api/events?userId=${merchantId}`);
     es.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
         if (!data || !data.type) return;
         const { type, product, product_id } = data;
-        if (type === 'merchant') {
-          // Handle merchant-specific events
-          const event = data.event || data.type; // fallback
-        }
-        // Our emit functions send type field inside data.type, but payload includes product_created etc.
-        if (data.type === 'product_created') {
+        if (type === 'product_created') {
           setProducts((prev) => [product, ...prev]);
-        } else if (data.type === 'product_updated') {
+        } else if (type === 'product_updated') {
           setProducts((prev) => prev.map(p => p.id === product.id ? product : p));
-        } else if (data.type === 'product_deleted') {
+        } else if (type === 'product_deleted') {
           setProducts((prev) => prev.filter(p => p.id !== product_id));
         }
       } catch (err) {
@@ -168,6 +265,45 @@ export default function MerchantPortal({ currentUser, onAuditUpdate }) {
     };
     es.onerror = (err) => {
       console.error('SSE error', err);
+      es.close();
+    };
+    return () => {
+      es.close();
+    };
+  }, [merchantId]);
+
+  // SSE subscription for order and audit events
+  useEffect(() => {
+    if (!merchantId) return;
+    const es = new EventSource(`http://localhost:8000/api/events?userId=${merchantId}`);
+    es.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (!data || !data.type) return;
+        const { type, order, orderId, status, audit } = data;
+        if (type === 'order_created') {
+          setOrders(prev => [order, ...prev]);
+        } else if (type === 'order_updated') {
+          setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
+        } else if (type === 'audit_created') {
+          setAuditLogs(prev => [audit, ...prev]);
+        } else if (type === 'CAMPAIGN_ACTIVATED') {
+          setInsights(prev => prev ? {
+            ...prev,
+            active_campaigns: [data.campaign, ...(prev.active_campaigns || [])]
+          } : null);
+        } else if (type === 'CAMPAIGN_EXPIRED') {
+          setInsights(prev => prev ? {
+            ...prev,
+            active_campaigns: (prev.active_campaigns || []).filter(c => c.id !== data.campaign.id)
+          } : null);
+        }
+      } catch (err) {
+        console.error('SSE order/audit parse error', err);
+      }
+    };
+    es.onerror = (err) => {
+      console.error('SSE order/audit error', err);
       es.close();
     };
     return () => {
@@ -256,19 +392,26 @@ export default function MerchantPortal({ currentUser, onAuditUpdate }) {
           title: `Campaign for ${action.target || action.product_name}`,
           target_segment: action.target || action.product_name,
           action_type: action.action_type || 'BUNDLE_PROMO',
-          discount_value: action.discount_value || 50,
+          discount_percent: action.discount_percent || action.discount_value || 5, // Fallback to 5%
+          budget: action.budget || 5000,
           merchant_id: merchantId
         })
       });
 
       const data = await res.json();
-      setCampaignSuccess(data.message || `Campaign '${action.target || action.product_name}' is now live for ${storeName}!`);
-      await fetchMerchantData();
-      if (onAuditUpdate) onAuditUpdate();
+      
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to launch campaign');
+      }
+
+      setCampaignSuccess('Campaign launched successfully');
+      // No need to fetchMerchantData() because SSE will update the UI in real-time
       setTimeout(() => setCampaignSuccess(null), 5000);
     } catch (err) {
       console.error('Campaign approve error:', err);
-      setCampaignSuccess(`Campaign is now live!`);
+      // Show actual backend error
+      setCampaignSuccess(`Error: ${err.message}`);
+      setTimeout(() => setCampaignSuccess(null), 5000);
     } finally {
       setApprovingCampaignId(null);
     }
@@ -452,14 +595,11 @@ export default function MerchantPortal({ currentUser, onAuditUpdate }) {
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'lab', label: 'Innovation Lab', icon: FlaskConical, isNew: true },
     { id: 'smart_discounts', label: 'AI Smart Discounts', icon: Tag, badge: discountMetrics.pending_approval_count, isNew: true },
-    { id: 'products', label: 'Products', icon: Package, badge: products.length },
-    { id: 'customers', label: 'Customers', icon: Users, badge: customers.length },
     { id: 'orders', label: 'Orders', icon: ShoppingCart, badge: orders.length },
     { id: 'insights', label: 'Growth Insights', icon: TrendingUp },
     { id: 'opportunities', label: 'AI Opportunities', icon: Sparkles },
     { id: 'simulator', label: 'What-If Simulator', icon: Calculator },
     { id: 'campaigns', label: 'Campaigns', icon: Megaphone, badge: (insights?.active_campaigns?.length || 0) + (smartDiscountsData?.active_discounts?.length || 0) },
-    { id: 'audit', label: 'Audit Log', icon: History },
     { id: 'settings', label: 'Settings', icon: SettingsIcon }
   ];
 
@@ -1466,15 +1606,11 @@ export default function MerchantPortal({ currentUser, onAuditUpdate }) {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '18px', background: '#f8fafc', padding: '18px', borderRadius: '14px', border: '1px solid #e2e8f0', marginBottom: '18px' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>Select Catalog Product</label>
-                <select
+                <ProductSelectDropdown 
+                  products={products}
                   value={simulatorProduct?.id || ''}
-                  onChange={(e) => setSimulatorProduct(products.find(p => p.id === e.target.value) || products[0])}
-                  style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
-                >
-                  {products.map(p => (
-                    <option key={p.id} value={p.id}>{p.name} — ₹{p.price}</option>
-                  ))}
-                </select>
+                  onChange={(p) => setSimulatorProduct(p)}
+                />
               </div>
 
               <div>
@@ -2212,15 +2348,11 @@ export default function MerchantPortal({ currentUser, onAuditUpdate }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px', background: '#f8fafc', padding: '20px', borderRadius: '14px', border: '1px solid #e2e8f0', marginBottom: '24px' }}>
             <div>
               <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>Select Product from Catalog</label>
-              <select
+              <ProductSelectDropdown 
+                products={products}
                 value={simulatorProduct?.id || ''}
-                onChange={(e) => setSimulatorProduct(products.find(p => p.id === e.target.value) || products[0])}
-                style={{ width: '100%', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '0.82rem' }}
-              >
-                {products.map(p => (
-                  <option key={p.id} value={p.id}>{p.name} — ₹{p.price}</option>
-                ))}
-              </select>
+                onChange={(p) => setSimulatorProduct(p)}
+              />
             </div>
 
             <div>
@@ -2327,55 +2459,6 @@ export default function MerchantPortal({ currentUser, onAuditUpdate }) {
                 No active campaigns yet. Approve a smart discount or bundle opportunity to launch.
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================
-          TAB 9: AUDIT LOG (TRACK 01 AUDIT TRAIL)
-         ======================================================== */}
-      {activeTab === 'audit' && (
-        <div style={{ background: '#ffffff', borderRadius: '18px', border: '1px solid #e2e8f0', padding: '24px' }}>
-          <div style={{ marginBottom: '20px' }}>
-            <h2 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <History size={20} color="#7c3aed" /> Agentic Commerce Audit Trail
-            </h2>
-            <p style={{ fontSize: '0.8rem', color: '#64748b' }}>
-              Immutable human-readable record of AI recommendations, merchant discount approvals, cart conversions, and Razorpay transactions.
-            </p>
-          </div>
-
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-              <thead>
-                <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                  <th style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b' }}>Time</th>
-                  <th style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b' }}>Actor / Agent</th>
-                  <th style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b' }}>Action</th>
-                  <th style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b' }}>Details</th>
-                  <th style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b' }}>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {auditLogs.map(l => (
-                  <tr key={l.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                    <td style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b', whiteSpace: 'nowrap' }}>{l.timestamp}</td>
-                    <td style={{ padding: '10px 14px' }}>
-                      <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: '#f1f5f9', color: '#475569' }}>
-                        {l.agent}
-                      </span>
-                    </td>
-                    <td style={{ padding: '10px 14px', fontSize: '0.8rem', fontWeight: 700, color: '#0f172a' }}>{l.action}</td>
-                    <td style={{ padding: '10px 14px', fontSize: '0.78rem', color: '#334155' }}>{l.reason}</td>
-                    <td style={{ padding: '10px 14px' }}>
-                      <span style={{ fontSize: '0.7rem', fontWeight: 700, padding: '2px 8px', borderRadius: '6px', background: l.status === 'COMPLETED' ? '#ecfdf5' : '#fef2f2', color: l.status === 'COMPLETED' ? '#047857' : '#b91c1c' }}>
-                        {l.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
           </div>
         </div>
       )}

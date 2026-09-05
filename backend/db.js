@@ -1,4 +1,5 @@
 const { DatabaseSync } = require('node:sqlite');
+const { emitToCustomer, emitToMerchant } = require('./notifications');
 const path = require('path');
 
 const dbPath = path.join(__dirname, 'shopmind.db');
@@ -165,6 +166,15 @@ try { db.exec("ALTER TABLE orders ADD COLUMN payment_status TEXT DEFAULT 'PENDIN
 try { db.exec("ALTER TABLE orders ADD COLUMN subtotal_amount REAL"); } catch (_) { }
 try { db.exec("ALTER TABLE orders ADD COLUMN discount_amount REAL DEFAULT 0"); } catch (_) { }
 try { db.exec("ALTER TABLE orders ADD COLUMN shipping_address_json TEXT"); } catch (_) { }
+
+// Ensure campaigns table has all required columns
+try { db.exec("ALTER TABLE campaigns ADD COLUMN discount_percent REAL"); } catch (_) {}
+try { db.exec("ALTER TABLE campaigns ADD COLUMN budget REAL"); } catch (_) {}
+try { db.exec("ALTER TABLE campaigns ADD COLUMN max_transaction REAL"); } catch (_) {}
+try { db.exec("ALTER TABLE campaigns ADD COLUMN start_at TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE campaigns ADD COLUMN end_at TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE campaigns ADD COLUMN target_segment TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE campaigns ADD COLUMN selected_products TEXT"); } catch (_) {}
 
 const { hashPassword } = require('./auth');
 // Recommendation log table for tracking
@@ -418,16 +428,46 @@ function logAudit(actorType, actorId, action, reason, metadata = {}, status = 'C
   try { db.exec("ALTER TABLE campaigns ADD COLUMN max_transaction REAL"); } catch (_) {}
   try { db.exec("ALTER TABLE campaigns ADD COLUMN start_at TEXT"); } catch (_) {}
   try { db.exec("ALTER TABLE campaigns ADD COLUMN end_at TEXT"); } catch (_) {}
+  try {
+    db.exec("ALTER TABLE campaigns ADD COLUMN target_segment TEXT");
+  } catch (e) { /* Ignore if exists */ }
+  try {
+    db.exec("ALTER TABLE campaigns ADD COLUMN selected_products TEXT");
+  } catch (e) { /* Ignore if exists */ }
+  try {
+    db.exec("ALTER TABLE products ADD COLUMN views INTEGER DEFAULT 0");
+  } catch (e) { /* Ignore if exists */ }
+  const auditId = `aud_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+  const createdAt = new Date().toISOString();
   stmt.run(
-    `aud_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+    auditId,
     actorType,
     actorId || 'system',
     action,
     reason,
     JSON.stringify(metadata),
     status,
-    new Date().toISOString()
+    createdAt
   );
+  // Emit SSE event for audit log creation
+  const auditEvent = {
+    id: auditId,
+    actor_type: actorType,
+    actor_id: actorId || 'system',
+    action,
+    reason,
+    metadata_json: JSON.stringify(metadata),
+    status,
+    created_at: createdAt
+  };
+  if (actorType === 'Merchant' && actorId) {
+    emitToMerchant(actorId, { type: 'audit_created', audit: auditEvent });
+  } else if (actorType === 'Customer' && actorId) {
+    emitToCustomer(actorId, { type: 'audit_created', audit: auditEvent });
+  } else {
+    // Broadcast to all interested parties if no specific actor
+    // Using emitToMerchant for merchant side and emitToCustomer for customer side could be added as needed
+  }
 }
 
 const { getComplementary } = require('./recommendation_engine');

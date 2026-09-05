@@ -3,7 +3,7 @@ const cors = require('cors');
 const Razorpay = require('razorpay');
 const { db, logAudit } = require('./db');
 const { AgentTools } = require('./agentTools');
-const { router: notificationsRouter, emitToMerchant, emitToCustomer } = require('./notifications');
+const { router: notificationsRouter, emitToMerchant, emitToCustomer, broadcast } = require('./notifications');
 const { hashPassword, verifyPassword, createAccessToken, verifyAccessToken } = require('./auth');
 
 const app = express();
@@ -2392,6 +2392,37 @@ function handleVerifyPayment(req, res) {
     payment_status: 'PAID'
   });
 
+  const formattedOrder = db.prepare(`
+    SELECT oi.id as item_id, oi.order_id, oi.quantity, oi.price,
+           p.name as product_name, p.image_url,
+           o.customer_id, u.name as customer_name, u.email as customer_email,
+           o.status as order_status, o.payment_method, o.payment_status,
+           o.shipping_address_json, o.created_at, o.razorpay_payment_id, o.merchant_id
+    FROM order_items oi
+    JOIN orders o ON oi.order_id = o.id
+    JOIN products p ON oi.product_id = p.id
+    LEFT JOIN users u ON o.customer_id = u.id
+    WHERE o.id = ?
+  `).get(order.id);
+  
+  if (formattedOrder) {
+    let address = null;
+    try {
+      address = formattedOrder.shipping_address_json ? JSON.parse(formattedOrder.shipping_address_json) : null;
+    } catch (_) {}
+    
+    const fOrder = {
+      ...formattedOrder,
+      shipping_address: address,
+      customer_name: address?.full_name || formattedOrder.customer_name || 'Verified Customer',
+      payment_method: formattedOrder.payment_method || 'CARD',
+      payment_status: formattedOrder.payment_status || 'PAID',
+      order_status: formattedOrder.order_status || 'CONFIRMED'
+    };
+    
+    emitToMerchant(formattedOrder.merchant_id, { type: 'order_created', order: fOrder });
+  }
+
   res.json({
     status: 'SUCCESS',
     message: 'Payment verified and order confirmed!',
@@ -2612,6 +2643,17 @@ app.delete('/api/merchant/products/:id', (req, res) => {
   res.json({ success: true, message: 'Product deleted from your store catalog.' });
 });
 
+// GET /api/merchant/products/:id/view (Increments view count)
+app.post('/api/products/:id/view', (req, res) => {
+  const productId = req.params.id;
+  try {
+    db.prepare('UPDATE products SET views = COALESCE(views, 0) + 1 WHERE id = ?').run(productId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/merchant/orders (Returns only orders belonging to current merchant)
 app.get('/api/merchant/orders', (req, res) => {
   const merchant = getAuthenticatedMerchant(req);
@@ -2664,7 +2706,7 @@ app.get('/api/merchant/insights', (req, res) => {
   const productsCount = merchantProds.length;
 
   const merchantOrderItems = db.prepare(`
-    SELECT oi.*, o.status as order_status, o.payment_status, o.payment_method
+    SELECT oi.*, o.status as order_status, o.payment_status, o.payment_method, o.customer_id
     FROM order_items oi
     JOIN orders o ON oi.order_id = o.id
     WHERE oi.merchant_id = ?
@@ -2679,18 +2721,98 @@ app.get('/api/merchant/insights', (req, res) => {
   const avgBasket = paidOrdersCount > 0 ? Math.round(totalSales / paidOrdersCount) : 0;
 
   // Real opportunities tailored to this merchant's catalog
-  const topProds = merchantProds.slice(0, 3);
-  const nextBestActions = topProds.map((p, idx) => ({
-    id: `opp_0${idx + 1}`,
-    target: `${p.name} Bundle Opportunity`,
-    observation: `Customers frequently view ${p.name}. Stock: ${p.stock} units.`,
-    recommended_action: `Deploy AI cross-sell bundle for ${p.name}`,
-    expected_impact: `Potential basket increase: ₹${p.price} → ₹${Math.round(p.price * 1.6)}`,
-    action_type: 'BUNDLE',
-    base_price: p.price,
-    bundle_price: Math.round(p.price * 1.6),
-    discount_value: p.price > 1000 ? 100 : 50
-  }));
+  const nextBestActions = [];
+
+  // Calculate product performance
+  const prodPerformance = merchantProds.map(p => {
+    const pOrders = paidItems.filter(oi => oi.product_id === p.id).reduce((sum, oi) => sum + oi.quantity, 0);
+    return { ...p, orderCount: pOrders, views: p.views || 0 };
+  });
+
+  // High views, low purchases
+  const highViewsLowPurchases = prodPerformance
+    .filter(p => p.views > 0)
+    .sort((a, b) => (b.views - b.orderCount) - (a.views - a.orderCount))
+    .slice(0, 2);
+
+  highViewsLowPurchases.forEach((p, idx) => {
+    if (p.views > p.orderCount) {
+      nextBestActions.push({
+        id: `opp_views_${p.id}`,
+        target: `${p.name} Conversion Drop-off`,
+        observation: `High traffic (${p.views} views) but low purchases (${p.orderCount} orders).`,
+        recommended_action: `Launch targeted discount campaign for ${p.name}`,
+        expected_impact: `Potential revenue: ₹${Math.round(p.price * (p.views * 0.1))}`,
+        action_type: 'DISCOUNT',
+        base_price: p.price,
+        discount_value: Math.round(p.price * 0.1) // 10% discount
+      });
+    }
+  });
+
+  // Low stock, high demand
+  const lowStockHighDemand = prodPerformance
+    .filter(p => p.stock > 0 && p.stock < 10 && p.orderCount > 0)
+    .sort((a, b) => b.orderCount - a.orderCount)
+    .slice(0, 1);
+
+  lowStockHighDemand.forEach(p => {
+    nextBestActions.push({
+      id: `opp_stock_${p.id}`,
+      target: `${p.name} Restock Alert`,
+      observation: `High demand (${p.orderCount} sold) but critically low stock (${p.stock} remaining).`,
+      recommended_action: `Restock and slightly increase price (+5%)`,
+      expected_impact: `Maximize margin on remaining inventory.`,
+      action_type: 'UPSELL',
+      base_price: p.price,
+      discount_value: 0
+    });
+  });
+
+  // Abandoned carts (carts with items belonging to this merchant but no order)
+  const cartItemsForMerchant = db.prepare(`
+    SELECT ci.cart_id, c.customer_id, ci.product_id, ci.quantity, ci.price
+    FROM cart_items ci
+    JOIN carts c ON ci.cart_id = c.id
+    WHERE ci.product_id IN (SELECT id FROM products WHERE merchant_id = ?)
+  `).all(mId);
+
+  // Exclude carts that have been converted to orders (basic approximation: if customer has an order, ignore for now)
+  const customersWithOrders = new Set(merchantOrderItems.map(oi => oi.customer_id));
+  const abandonedCarts = cartItemsForMerchant.filter(ci => !customersWithOrders.has(ci.customer_id));
+
+  if (abandonedCarts.length > 0) {
+    const abandonedValue = abandonedCarts.reduce((sum, ci) => sum + (ci.price * ci.quantity), 0);
+    nextBestActions.push({
+      id: 'opp_abandoned_01',
+      target: `${abandonedCarts.length} Abandoned Carts`,
+      observation: `₹${abandonedValue} worth of products left in carts.`,
+      recommended_action: `Send Cart Recovery Incentive`,
+      expected_impact: `Recover estimated ₹${Math.round(abandonedValue * 0.3)} (30% recovery)`,
+      action_type: 'CART_RECOVERY',
+      base_price: abandonedValue,
+      discount_value: Math.round(abandonedValue * 0.05) // 5% recovery discount
+    });
+  }
+
+  // Cross-sell opportunities
+  if (prodPerformance.length >= 2) {
+    const topProd = prodPerformance.sort((a, b) => b.orderCount - a.orderCount)[0];
+    const relatedProd = prodPerformance.find(p => p.id !== topProd.id && p.category === topProd.category) || prodPerformance.find(p => p.id !== topProd.id);
+    
+    if (topProd && relatedProd) {
+      nextBestActions.push({
+        id: `opp_cross_${topProd.id}`,
+        target: `${topProd.name} + ${relatedProd.name} Bundle`,
+        observation: `Frequently viewed in similar categories.`,
+        recommended_action: `Deploy AI cross-sell bundle`,
+        expected_impact: `Potential basket increase: ₹${topProd.price} → ₹${Math.round((topProd.price + relatedProd.price) * 0.9)}`,
+        action_type: 'BUNDLE',
+        base_price: topProd.price + relatedProd.price,
+        discount_value: Math.round((topProd.price + relatedProd.price) * 0.1)
+      });
+    }
+  }
 
   const campaigns = db.prepare("SELECT * FROM campaigns WHERE merchant_id = ? AND status = 'ACTIVE'").all(mId);
 
@@ -2720,15 +2842,19 @@ app.post('/api/merchant/approve-campaign', (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const { title, action_type, discount_percent, budget, max_transaction, start_at, end_at } = req.body;
+  const { title, action_type, target_segment, selected_products, discount_percent, budget, max_transaction, start_at, end_at } = req.body;
+  
   // Guardrails
   if (discount_percent !== undefined && discount_percent > 15) {
+    logAudit('Merchant', merchant.merchant_id, 'Campaign Rejected', `Discount ${discount_percent}% exceeds limit`, { discount_percent }, 'FAILED');
     return res.status(400).json({ error: 'Campaign rejected: discount exceeds maximum allowed limit of 15%.' });
   }
   if (budget !== undefined && budget > 5000) {
+    logAudit('Merchant', merchant.merchant_id, 'Campaign Rejected', `Budget ₹${budget} exceeds limit`, { budget }, 'FAILED');
     return res.status(400).json({ error: 'Campaign rejected: budget exceeds maximum allowed limit of ₹5,000.' });
   }
   if (max_transaction !== undefined && max_transaction > 2000) {
+    logAudit('Merchant', merchant.merchant_id, 'Campaign Rejected', `Max transaction ₹${max_transaction} exceeds limit`, { max_transaction }, 'FAILED');
     return res.status(400).json({ error: 'Campaign rejected: max transaction amount exceeds limit of ₹2,000.' });
   }
 
@@ -2736,38 +2862,70 @@ app.post('/api/merchant/approve-campaign', (req, res) => {
   const mId = merchant.merchant_id;
   const campTitle = title || `${merchant.store_name} Campaign`;
 
-  db.prepare(`
-    INSERT INTO campaigns (id, merchant_id, name, type, status, expected_revenue, actual_revenue, created_at, discount_percent, budget, max_transaction, start_at, end_at)
-    VALUES (?, ?, ?, ?, 'ACTIVE', 50000.0, 0.0, ?, ?, ?, ?, ?, ?)
-  `).run(
-    campId,
-    mId,
-    campTitle,
-    action_type || 'PROMO',
-    new Date().toISOString(),
-    discount_percent || null,
-    budget || null,
-    max_transaction || null,
-    start_at || null,
-    end_at || null
-  );
+  try {
+    db.prepare(`
+      INSERT INTO campaigns (id, merchant_id, name, type, status, expected_revenue, actual_revenue, created_at, discount_percent, budget, max_transaction, start_at, end_at, target_segment, selected_products)
+      VALUES (?, ?, ?, ?, 'ACTIVE', 50000.0, 0.0, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      campId,
+      mId,
+      campTitle,
+      action_type || 'PROMO',
+      new Date().toISOString(),
+      discount_percent || null,
+      budget || null,
+      max_transaction || null,
+      start_at || null,
+      end_at || null,
+      target_segment || null,
+      selected_products || null
+    );
 
-  logAudit('Merchant', mId, 'Campaign Approved', `Merchant approved campaign '${campTitle}'`, {
-    campaign_id: campId,
-    merchant_id: mId,
-    title: campTitle,
-    discount_percent,
-    budget,
-    max_transaction,
-    start_at,
-    end_at
-  });
+    const campaignObj = {
+      id: campId,
+      merchant_id: mId,
+      name: campTitle,
+      type: action_type || 'PROMO',
+      status: 'ACTIVE',
+      discount_percent: discount_percent || null,
+      budget: budget || null,
+      target_segment: target_segment || null,
+      selected_products: selected_products || null,
+      start_at: start_at || null,
+      end_at: end_at || null
+    };
 
-  res.json({
-    status: 'APPROVED',
-    campaign: { id: campId, name: campTitle, status: 'ACTIVE', merchant_id: mId },
-    message: `Campaign '${campTitle}' is now live for ${merchant.store_name}!`
-  });
+    logAudit('Merchant', mId, 'Campaign Approved', `Merchant approved campaign '${campTitle}'`, campaignObj);
+
+    // Emit real-time events
+    emitToMerchant(mId, { type: 'CAMPAIGN_ACTIVATED', campaign: campaignObj });
+    broadcast({ type: 'CAMPAIGN_ACTIVATED', campaign: campaignObj });
+
+    // Handle auto-expiry if end_at is provided (and in the future)
+    if (end_at) {
+      const msUntilExpiry = new Date(end_at).getTime() - Date.now();
+      if (msUntilExpiry > 0) {
+        setTimeout(() => {
+          try {
+            db.prepare("UPDATE campaigns SET status = 'EXPIRED' WHERE id = ?").run(campId);
+            const expiredObj = { ...campaignObj, status: 'EXPIRED' };
+            emitToMerchant(mId, { type: 'CAMPAIGN_EXPIRED', campaign: expiredObj });
+            broadcast({ type: 'CAMPAIGN_EXPIRED', campaign: expiredObj });
+          } catch (e) { console.error("Campaign expiry error:", e); }
+        }, msUntilExpiry);
+      }
+    }
+
+    res.json({
+      status: 'APPROVED',
+      campaign: campaignObj,
+      message: `Campaign '${campTitle}' is now live for ${merchant.store_name}!`
+    });
+  } catch (err) {
+    console.error("Campaign insert error", err);
+    logAudit('Merchant', mId, 'Campaign Failed', `Database error launching campaign '${campTitle}'`, { error: err.message }, 'FAILED');
+    return res.status(500).json({ error: 'Failed to launch campaign due to an internal error.' });
+  }
 });
 
 // GET /api/merchant/customers (Aggregates customers who interacted or purchased from this merchant)

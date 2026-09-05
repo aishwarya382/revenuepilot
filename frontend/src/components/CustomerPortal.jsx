@@ -98,6 +98,9 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
 
   // System Notification
   const [notification, setNotification] = useState(null);
+  
+  // Active Campaign State from SSE
+  const [activeCampaign, setActiveCampaign] = useState(null);
 
   // Selected Product for Details Modal
   const [detailProduct, setDetailProduct] = useState(null);
@@ -143,6 +146,33 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       }
     };
   }, []);
+
+  // SSE Subscription for Customer to receive real-time campaign offers
+  useEffect(() => {
+    if (!customerId) return;
+    const es = new EventSource(`http://localhost:8000/api/events?userId=${customerId}`);
+    es.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.type === 'CAMPAIGN_ACTIVATED' && data.campaign) {
+          setActiveCampaign(data.campaign);
+          // Optional notification popup:
+          showNotification(`New offer unlocked: ${data.campaign.name}!`, 'success');
+        } else if (data.type === 'CAMPAIGN_EXPIRED' && data.campaign) {
+          setActiveCampaign(null);
+        }
+      } catch (err) {
+        console.error('SSE customer parse error', err);
+      }
+    };
+    es.onerror = (err) => {
+      console.error('SSE customer error', err);
+      es.close();
+    };
+    return () => {
+      es.close();
+    };
+  }, [customerId]);
 
   const showNotification = (msg, type = 'success') => {
     setNotification({ msg, type });
@@ -489,6 +519,31 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
     }
   };
 
+  const handleViewProduct = (prod) => {
+    setDetailProduct(prod);
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      fetch(`http://localhost:8000/api/products/${prod.id}/view`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      }).catch(err => console.error('Failed to track view:', err));
+    }
+  };
+
+  const handleApplyDiscount = (code, amount) => {
+    if (!product) return;
+    if (product.is_external || product.origin === 'EXTERNAL') {
+      if (product.source_url) {
+        window.open(product.source_url, '_blank', 'noopener,noreferrer');
+      }
+      return;
+    }
+
+    if (onOpenCheckout) {
+      onOpenCheckout([{ product_id: product.id || product.product_id, name: product.name, price: product.price, quantity: 1 }]);
+    }
+  };
+
   const handleBuyNow = async (product) => {
     if (!product) return;
     if (product.is_external || product.origin === 'EXTERNAL') {
@@ -532,6 +587,36 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
             <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>{notification.msg}</span>
           </div>
           <button onClick={() => setNotification(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem', color: 'inherit', fontWeight: 700 }}>✕</button>
+        </div>
+      )}
+
+      {/* ACTIVE CAMPAIGN / OFFER BANNER */}
+      {activeCampaign && (
+        <div style={{
+          background: 'linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%)',
+          border: '1px solid #c4b5fd',
+          borderRadius: '14px',
+          padding: '16px 20px',
+          marginBottom: '20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          color: '#5b21b6',
+          boxShadow: '0 6px 16px rgba(124, 58, 237, 0.12)'
+        }} className="animate-fade-in">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <Sparkles size={24} color="#7c3aed" />
+            <div>
+              <div style={{ fontSize: '1rem', fontWeight: 800 }}>{activeCampaign.name}</div>
+              <div style={{ fontSize: '0.85rem', color: '#6d28d9', marginTop: '2px', fontWeight: 600 }}>
+                {activeCampaign.discount_percent ? `${activeCampaign.discount_percent}% OFF ` : ''} 
+                Applicable now! {activeCampaign.target_segment ? `(For: ${activeCampaign.target_segment})` : ''}
+              </div>
+            </div>
+          </div>
+          <div style={{ fontSize: '0.75rem', background: '#7c3aed', color: '#fff', padding: '4px 10px', borderRadius: '8px', fontWeight: 700 }}>
+            Active Offer
+          </div>
         </div>
       )}
 
@@ -1540,7 +1625,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
                               </div>
                             </div>
                             <button
-                              onClick={() => setDetailProduct(prod)}
+                              onClick={() => handleViewProduct(prod)}
                               title="View product details"
                               style={{
                                 background: '#f1f5f9',
