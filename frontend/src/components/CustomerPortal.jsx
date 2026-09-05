@@ -406,7 +406,6 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
     setHasSearched(true);
 
     try {
-      const isFreshImage = Boolean(imageToSend);
       const res = await fetch('http://localhost:8000/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -415,9 +414,9 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
           image_data: imageToSend?.dataUrl || null,
           image_name: imageToSend?.name || null,
           customer_id: customerId,
-          last_products: isFreshImage ? [] : (aiResponse?.compared_products || []),
-          last_bundle: isFreshImage ? null : (aiResponse?.bundle || null),
-          last_selected_product_id: isFreshImage ? null : (aiResponse?.primary_product?.id || null),
+          last_products: aiResponse?.compared_products || [],
+          last_bundle: aiResponse?.bundle || null,
+          last_selected_product_id: aiResponse?.primary_product?.id || null,
           modality: modality
         })
       });
@@ -430,7 +429,6 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
         sender: 'ai',
         text: data.ai_message || data.message,
         visualAttributes: data.visual_attributes || null,
-        debugInfo: data.debug_info || null,
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         actionType: data.action_type,
         primaryProduct: data.primary_product,
@@ -971,39 +969,19 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
                           fontSize: '0.78rem'
                         }}>
                           <div style={{ fontSize: '0.7rem', fontWeight: 800, color: '#7c3aed', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <Sparkles size={12} /> Vision AI Understanding: <strong style={{ color: '#0f172a', textTransform: 'capitalize' }}>{msg.visualAttributes.detected_object || msg.visualAttributes.object}</strong>
+                            <Sparkles size={12} /> Visual Attribute Understanding
                           </div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginBottom: msg.debugInfo ? '8px' : '0' }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
                             <span style={{ background: '#f5f3ff', color: '#6d28d9', padding: '2px 8px', borderRadius: '6px', fontWeight: 700, fontSize: '0.7rem' }}>
                               🏷️ {msg.visualAttributes.category}
                             </span>
-                            {msg.visualAttributes.color && (
-                              <span style={{ background: '#ecfdf5', color: '#047857', padding: '2px 8px', borderRadius: '6px', fontWeight: 700, fontSize: '0.7rem' }}>
-                                🎨 {msg.visualAttributes.color}
-                              </span>
-                            )}
-                            {msg.visualAttributes.style && (
-                              <span style={{ background: '#eff6ff', color: '#1d4ed8', padding: '2px 8px', borderRadius: '6px', fontWeight: 700, fontSize: '0.7rem' }}>
-                                ✨ {msg.visualAttributes.style}
-                              </span>
-                            )}
+                            <span style={{ background: '#ecfdf5', color: '#047857', padding: '2px 8px', borderRadius: '6px', fontWeight: 700, fontSize: '0.7rem' }}>
+                              🎨 {msg.visualAttributes.color}
+                            </span>
+                            <span style={{ background: '#eff6ff', color: '#1d4ed8', padding: '2px 8px', borderRadius: '6px', fontWeight: 700, fontSize: '0.7rem' }}>
+                              👟 {msg.visualAttributes.style}
+                            </span>
                           </div>
-                          {msg.debugInfo && (
-                            <div style={{
-                              borderTop: '1px dashed #e2e8f0',
-                              paddingTop: '6px',
-                              marginTop: '6px',
-                              fontSize: '0.68rem',
-                              color: '#64748b',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: '2px'
-                            }}>
-                              <div>• <strong>Image Received</strong>: {msg.debugInfo.image_received} ({msg.debugInfo.image_type}, {msg.debugInfo.image_size})</div>
-                              <div>• <strong>Vision Executed</strong>: {msg.debugInfo.vision_executed} &rarr; <code>{msg.debugInfo.vision_result}</code></div>
-                              <div>• <strong>Catalog Query</strong>: <code>{msg.debugInfo.catalog_query}</code></div>
-                            </div>
-                          )}
                         </div>
                       )}
 
