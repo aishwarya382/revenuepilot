@@ -1980,32 +1980,66 @@ export default function MerchantPortal({ currentUser, onAuditUpdate }) {
                 <thead>
                   <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
                     <th style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b' }}>Order ID</th>
-                    <th style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b' }}>Customer ID</th>
+                    <th style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b' }}>Customer & Destination</th>
                     <th style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b' }}>Product Purchased</th>
                     <th style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b' }}>Qty</th>
                     <th style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b' }}>Amount</th>
-                    <th style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b' }}>Payment ID</th>
+                    <th style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b' }}>Payment Method</th>
                     <th style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b' }}>Payment Status</th>
                     <th style={{ padding: '10px 14px', fontSize: '0.75rem', color: '#64748b' }}>Date</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {orders.map(o => (
-                    <tr key={o.item_id || o.order_id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                      <td style={{ padding: '12px 14px', fontSize: '0.78rem', fontFamily: 'monospace', fontWeight: 700 }}>{o.order_id}</td>
-                      <td style={{ padding: '12px 14px', fontSize: '0.78rem', color: '#64748b' }}>{o.customer_id}</td>
-                      <td style={{ padding: '12px 14px', fontSize: '0.82rem', fontWeight: 700, color: '#0f172a' }}>{o.product_name}</td>
-                      <td style={{ padding: '12px 14px', fontSize: '0.82rem', fontWeight: 600 }}>{o.quantity}</td>
-                      <td style={{ padding: '12px 14px', fontSize: '0.85rem', fontWeight: 800, color: '#059669' }}>₹{(o.price * o.quantity).toLocaleString('en-IN')}</td>
-                      <td style={{ padding: '12px 14px', fontSize: '0.75rem', fontFamily: 'monospace', color: '#64748b' }}>{o.razorpay_payment_id || 'pay_test_active'}</td>
-                      <td style={{ padding: '12px 14px' }}>
-                        <span style={{ fontSize: '0.72rem', padding: '2px 8px', borderRadius: '6px', fontWeight: 700, background: o.order_status === 'PAID' ? '#ecfdf5' : '#fef2f2', color: o.order_status === 'PAID' ? '#047857' : '#b91c1c' }}>
-                          {o.order_status}
-                        </span>
-                      </td>
-                      <td style={{ padding: '12px 14px', fontSize: '0.75rem', color: '#64748b' }}>{o.created_at ? new Date(o.created_at).toLocaleString() : 'Recent'}</td>
-                    </tr>
-                  ))}
+                  {orders.map(o => {
+                    const isPaid = o.payment_status === 'PAID' || o.order_status === 'PAID';
+                    const isCod = o.payment_method === 'COD';
+
+                    return (
+                      <tr key={o.item_id || o.order_id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                        <td style={{ padding: '12px 14px', fontSize: '0.78rem', fontFamily: 'monospace', fontWeight: 700, color: '#0f172a' }}>
+                          {o.order_id}
+                        </td>
+                        <td style={{ padding: '12px 14px', fontSize: '0.78rem' }}>
+                          <div style={{ fontWeight: 700, color: '#0f172a' }}>{o.customer_name || o.customer_id}</div>
+                          {o.shipping_address && (
+                            <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                              {o.shipping_address.city}, {o.shipping_address.state}
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ padding: '12px 14px', fontSize: '0.82rem', fontWeight: 700, color: '#0f172a' }}>
+                          {o.product_name}
+                        </td>
+                        <td style={{ padding: '12px 14px', fontSize: '0.82rem', fontWeight: 600 }}>
+                          {o.quantity}
+                        </td>
+                        <td style={{ padding: '12px 14px', fontSize: '0.85rem', fontWeight: 800, color: isPaid ? '#059669' : '#d97706' }}>
+                          ₹{(o.price * o.quantity).toLocaleString('en-IN')}
+                        </td>
+                        <td style={{ padding: '12px 14px', fontSize: '0.75rem', fontWeight: 700, color: '#475569' }}>
+                          <span style={{ padding: '3px 8px', borderRadius: '6px', background: '#f1f5f9' }}>
+                            {o.payment_method || 'CARD'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px 14px' }}>
+                          <span style={{
+                            fontSize: '0.72rem',
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            fontWeight: 800,
+                            background: isPaid ? '#ecfdf5' : isCod ? '#fffbeb' : '#fef2f2',
+                            color: isPaid ? '#047857' : isCod ? '#d97706' : '#b91c1c',
+                            border: `1px solid ${isPaid ? '#a7f3d0' : isCod ? '#fde68a' : '#fecaca'}`
+                          }}>
+                            {isPaid ? 'PAID' : isCod ? 'COD (PENDING)' : o.payment_status || 'PENDING'}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px 14px', fontSize: '0.75rem', color: '#64748b' }}>
+                          {o.created_at ? new Date(o.created_at).toLocaleString() : 'Recent'}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

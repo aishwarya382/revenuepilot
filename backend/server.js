@@ -1690,86 +1690,386 @@ app.delete('/api/cart/clear', (req, res) => {
   res.json(updated);
 });
 
-// Routes: Orders
-app.get('/api/orders/customer/:customerId', (req, res) => {
-  const orders = db.prepare('SELECT * FROM orders WHERE customer_id = ? ORDER BY created_at DESC').all(req.params.customerId);
+// ==========================================================
+// DELIVERY ADDRESS APIS (CUSTOMER ISOLATED & VALIDATED)
+// ==========================================================
 
-  const fullOrders = orders.map(o => {
-    const items = db.prepare(`
-      SELECT oi.product_id, oi.quantity, oi.price, p.name, p.image_url, p.merchant_name
-      FROM order_items oi
-      LEFT JOIN products p ON oi.product_id = p.id
-      WHERE oi.order_id = ?
-    `).all(o.id);
+// GET /api/customer/addresses
+app.get('/api/customer/addresses', (req, res) => {
+  const cust = getAuthenticatedCustomer(req);
+  const custId = cust?.id || req.query.customer_id || 'cust_demo_01';
+  
+  const addresses = db.prepare(`
+    SELECT * FROM delivery_addresses 
+    WHERE customer_id = ? 
+    ORDER BY is_default DESC, created_at DESC
+  `).all(custId);
 
-    return {
-      id: o.id,
-      customer_id: o.customer_id,
-      total_amount: o.total_amount,
-      status: o.status,
-      razorpay_order_id: o.razorpay_order_id,
-      razorpay_payment_id: o.razorpay_payment_id,
-      created_at: o.created_at,
-      items: items.map(it => ({
-        product_id: it.product_id,
-        name: it.name || 'Product',
-        merchant_name: it.merchant_name || 'In-Store',
-        quantity: it.quantity,
-        price: it.price,
-        item_total: it.price * it.quantity
-      }))
-    };
-  });
-
-  res.json(fullOrders);
+  res.json(addresses);
 });
 
-// Routes: Razorpay Test Mode Payments
-function handleCreateOrder(req, res) {
-  const { amount, customer_id, items } = req.body;
+// POST /api/customer/address
+app.post('/api/customer/address', (req, res) => {
   const cust = getAuthenticatedCustomer(req);
-  const custId = cust?.id || customer_id || 'cust_demo_01';
+  const custId = cust?.id || req.body.customer_id || 'cust_demo_01';
 
-  // Backend validates catalog prices & merchant ownership strictly from database (Never trust frontend amount)
-  let verifiedTotal = 0;
+  const {
+    id,
+    full_name,
+    phone_number,
+    house_flat_building,
+    street_area,
+    city,
+    state,
+    pin_code,
+    landmark,
+    is_default = 1
+  } = req.body;
+
+  // Validation Rules
+  const cleanName = (full_name || '').trim();
+  if (!cleanName || cleanName.length < 2) {
+    return res.status(400).json({ error: 'Full name is required (at least 2 characters).' });
+  }
+
+  const cleanPhone = (phone_number || '').trim().replace(/[^\d+]/g, '');
+  if (!cleanPhone || cleanPhone.length < 10) {
+    return res.status(400).json({ error: 'A valid phone number (at least 10 digits) is required.' });
+  }
+
+  const cleanHouse = (house_flat_building || '').trim();
+  if (!cleanHouse) {
+    return res.status(400).json({ error: 'House / Flat / Building is required.' });
+  }
+
+  const cleanStreet = (street_area || '').trim();
+  if (!cleanStreet) {
+    return res.status(400).json({ error: 'Street / Area is required.' });
+  }
+
+  const cleanCity = (city || '').trim();
+  if (!cleanCity) {
+    return res.status(400).json({ error: 'City is required.' });
+  }
+
+  const cleanState = (state || '').trim();
+  if (!cleanState) {
+    return res.status(400).json({ error: 'State is required.' });
+  }
+
+  const cleanPin = (pin_code || '').trim();
+  if (!/^\d{6}$/.test(cleanPin)) {
+    return res.status(400).json({ error: 'A valid 6-digit Indian PIN code is required.' });
+  }
+
+  const addressId = id || `addr_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+  const makeDefault = is_default ? 1 : 0;
+
+  if (makeDefault === 1) {
+    db.prepare('UPDATE delivery_addresses SET is_default = 0 WHERE customer_id = ?').run(custId);
+  }
+
+  db.prepare(`
+    INSERT INTO delivery_addresses (
+      id, customer_id, full_name, phone_number, house_flat_building,
+      street_area, city, state, pin_code, landmark, is_default, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    addressId,
+    custId,
+    cleanName,
+    cleanPhone,
+    cleanHouse,
+    cleanStreet,
+    cleanCity,
+    cleanState,
+    cleanPin,
+    (landmark || '').trim() || null,
+    makeDefault,
+    new Date().toISOString()
+  );
+
+  const savedAddress = db.prepare('SELECT * FROM delivery_addresses WHERE id = ?').get(addressId);
+
+  logAudit('Customer', custId, 'ADDRESS_SAVED', `Saved delivery address for ${cleanName} (${cleanCity}, ${cleanState} - ${cleanPin})`, {
+    address_id: addressId,
+    city: cleanCity,
+    pin_code: cleanPin
+  });
+
+  res.json({
+    status: 'SUCCESS',
+    message: 'Delivery address saved successfully.',
+    address: savedAddress
+  });
+});
+
+// DELETE /api/customer/address/:id
+app.delete('/api/customer/address/:id', (req, res) => {
+  const cust = getAuthenticatedCustomer(req);
+  const custId = cust?.id || req.body?.customer_id || 'cust_demo_01';
+  const addressId = req.params.id;
+
+  const existing = db.prepare('SELECT * FROM delivery_addresses WHERE id = ?').get(addressId);
+  if (!existing || existing.customer_id !== custId) {
+    return res.status(404).json({ error: 'Address not found.' });
+  }
+
+  db.prepare('DELETE FROM delivery_addresses WHERE id = ? AND customer_id = ?').run(addressId, custId);
+  res.json({ status: 'SUCCESS', message: 'Address removed.' });
+});
+
+// ==========================================================
+// CHECKOUT SUMMARY (BACKEND-AUTHORITATIVE PRICE CALCULATION)
+// ==========================================================
+
+// Helper: Calculate authoritative checkout summary from database
+function calculateAuthoritativeSummary(customerId, clientItems = null, discountCode = null) {
+  let itemsToProcess = [];
+
+  if (clientItems && Array.isArray(clientItems) && clientItems.length > 0) {
+    itemsToProcess = clientItems;
+  } else {
+    // Read from customer's active database cart
+    const cart = AgentTools.getCart(customerId);
+    itemsToProcess = cart.items || [];
+  }
+
+  let subtotal = 0;
   const verifiedItems = [];
 
-  if (items && Array.isArray(items)) {
-    for (const it of items) {
-      const prodId = it.product_id || it.id;
-      if (prodId) {
-        const prod = db.prepare('SELECT * FROM products WHERE id = ?').get(prodId);
-        if (prod) {
-          const qty = Math.max(1, parseInt(it.quantity) || 1);
-          const unitPrice = prod.price;
-          verifiedTotal += (unitPrice * qty);
-          verifiedItems.push({
-            product_id: prod.id,
-            merchant_id: prod.merchant_id,
-            quantity: qty,
-            price: unitPrice,
-            name: prod.name
-          });
-        }
-      }
+  for (const it of itemsToProcess) {
+    const prodId = it.product_id || it.id || it.item_id;
+    if (!prodId) continue;
+
+    const prod = db.prepare('SELECT * FROM products WHERE id = ?').get(prodId);
+    if (prod) {
+      const qty = Math.max(1, parseInt(it.quantity) || 1);
+      const unitPrice = prod.price;
+      const lineTotal = unitPrice * qty;
+      subtotal += lineTotal;
+      verifiedItems.push({
+        product_id: prod.id,
+        merchant_id: prod.merchant_id,
+        merchant_name: prod.merchant_name,
+        name: prod.name,
+        category: prod.category,
+        image_url: prod.image_url,
+        price: unitPrice,
+        quantity: qty,
+        stock_available: prod.stock,
+        is_in_stock: prod.stock >= qty,
+        item_total: lineTotal
+      });
     }
   }
 
-  const finalAmount = verifiedTotal > 0 ? verifiedTotal : (Number(amount) || 100);
-  const orderId = `order_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-  const razorpayOrderId = `rzp_order_${Date.now()}`;
+  // Calculate smart discount if applicable
+  let discountAmount = 0;
+  let discountReason = null;
 
+  if (discountCode && discountCode.toUpperCase() === 'WELCOME10') {
+    discountAmount = Math.round(subtotal * 0.10);
+    discountReason = '10% Welcome Discount applied';
+  } else if (subtotal >= 1000) {
+    // Automatic high-basket volume loyalty incentive (5% off orders above ₹1,000)
+    discountAmount = Math.round(subtotal * 0.05);
+    discountReason = 'High-Value Basket 5% Smart Discount';
+  }
+
+  const finalAmount = Math.max(0, subtotal - discountAmount);
+
+  return {
+    items: verifiedItems,
+    item_count: verifiedItems.reduce((sum, it) => sum + it.quantity, 0),
+    subtotal: subtotal,
+    discount: discountAmount,
+    discount_reason: discountReason,
+    total_amount: finalAmount,
+    is_stock_available: verifiedItems.every(it => it.is_in_stock)
+  };
+}
+
+// POST /api/checkout/summary
+app.post('/api/checkout/summary', (req, res) => {
+  const cust = getAuthenticatedCustomer(req);
+  const custId = cust?.id || req.body.customer_id || 'cust_demo_01';
+  const { items, discount_code } = req.body;
+
+  const summary = calculateAuthoritativeSummary(custId, items, discount_code);
+  res.json(summary);
+});
+
+// ==========================================================
+// CASH ON DELIVERY (COD) ORDER PLACEMENT
+// ==========================================================
+
+// POST /api/checkout/cod
+app.post('/api/checkout/cod', (req, res) => {
+  const cust = getAuthenticatedCustomer(req);
+  const custId = cust?.id || req.body.customer_id || 'cust_demo_01';
+  const { items, shipping_address, address_id } = req.body;
+
+  // 1. Resolve Address
+  let targetAddress = shipping_address;
+  if (!targetAddress && address_id) {
+    targetAddress = db.prepare('SELECT * FROM delivery_addresses WHERE id = ?').get(address_id);
+  }
+  if (!targetAddress) {
+    // Try customer's default address
+    targetAddress = db.prepare('SELECT * FROM delivery_addresses WHERE customer_id = ? ORDER BY is_default DESC, created_at DESC LIMIT 1').get(custId);
+  }
+
+  if (!targetAddress || !targetAddress.full_name || !targetAddress.city || !targetAddress.pin_code) {
+    return res.status(400).json({ error: 'A complete delivery address with full name, city, and 6-digit PIN code is required.' });
+  }
+
+  // 2. Validate Items & Amount Authority
+  const summary = calculateAuthoritativeSummary(custId, items);
+  if (summary.items.length === 0) {
+    return res.status(400).json({ error: 'Your cart is empty. Please add products to checkout.' });
+  }
+
+  // Check stock
+  for (const it of summary.items) {
+    if (it.stock_available < it.quantity) {
+      return res.status(400).json({ error: `Insufficient stock for "${it.name}". Only ${it.stock_available} units available.` });
+    }
+  }
+
+  const orderNumber = Math.floor(1000 + Math.random() * 9000);
+  const orderId = `ORD-${orderNumber}`;
+  const nowStr = new Date().toISOString();
+
+  // 3. Create Order in Database
   db.prepare(`
-    INSERT INTO orders (id, customer_id, total_amount, status, razorpay_order_id, created_at)
-    VALUES (?, ?, ?, 'CREATED', ?, ?)
-  `).run(orderId, custId, finalAmount, razorpayOrderId, new Date().toISOString());
+    INSERT INTO orders (
+      id, customer_id, total_amount, subtotal_amount, discount_amount,
+      status, payment_method, payment_status, shipping_address_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, 'CONFIRMED', 'COD', 'PENDING', ?, ?)
+  `).run(
+    orderId,
+    custId,
+    summary.total_amount,
+    summary.subtotal,
+    summary.discount,
+    JSON.stringify(targetAddress),
+    nowStr
+  );
+
+  // 4. Create Order Items & Decrement Inventory Stock
+  const insertItem = db.prepare(`
+    INSERT INTO order_items (id, order_id, product_id, merchant_id, quantity, price)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  const updateStock = db.prepare('UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?');
+
+  for (const it of summary.items) {
+    insertItem.run(
+      `oi_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      orderId,
+      it.product_id,
+      it.merchant_id,
+      it.quantity,
+      it.price
+    );
+    updateStock.run(it.quantity, it.product_id);
+
+    logAudit('Inventory Agent', it.merchant_id, 'INVENTORY_UPDATED', `Decreased stock by ${it.quantity} for product "${it.name}" after COD Order ${orderId}`, {
+      order_id: orderId,
+      product_id: it.product_id,
+      quantity_sold: it.quantity
+    });
+  }
+
+  // 5. Clear Customer Cart
+  AgentTools.clearCart(custId);
+
+  // 6. Log Audit Events
+  logAudit('Checkout Agent', custId, 'COD_ORDER_CREATED', `Placed Cash on Delivery Order ${orderId} (₹${summary.total_amount.toLocaleString('en-IN')}) for ${targetAddress.full_name}`, {
+    order_id: orderId,
+    amount: summary.total_amount,
+    payment_method: 'COD',
+    payment_status: 'PENDING',
+    items_count: summary.items.length,
+    delivery_city: targetAddress.city
+  });
+
+  logAudit('Order Agent', custId, 'ORDER_CONFIRMED', `Order ${orderId} confirmed for delivery to ${targetAddress.city}, ${targetAddress.state} - ${targetAddress.pin_code}`, {
+    order_id: orderId,
+    status: 'CONFIRMED',
+    payment_status: 'PENDING'
+  });
+
+  res.json({
+    status: 'SUCCESS',
+    message: 'Cash on Delivery order placed successfully!',
+    order_id: orderId,
+    total_amount: summary.total_amount,
+    subtotal: summary.subtotal,
+    discount: summary.discount,
+    payment_method: 'COD',
+    payment_status: 'PENDING',
+    order_status: 'CONFIRMED',
+    shipping_address: targetAddress,
+    estimated_delivery: '2-4 business days'
+  });
+});
+
+// ==========================================================
+// RAZORPAY ONLINE CHECKOUT (CARD / UPI / NET BANKING)
+// ==========================================================
+
+function handleCreateOrder(req, res) {
+  const cust = getAuthenticatedCustomer(req);
+  const custId = cust?.id || req.body.customer_id || 'cust_demo_01';
+  const { items, payment_method = 'CARD', shipping_address, address_id } = req.body;
+
+  // 1. Resolve Address
+  let targetAddress = shipping_address;
+  if (!targetAddress && address_id) {
+    targetAddress = db.prepare('SELECT * FROM delivery_addresses WHERE id = ?').get(address_id);
+  }
+  if (!targetAddress) {
+    targetAddress = db.prepare('SELECT * FROM delivery_addresses WHERE customer_id = ? ORDER BY is_default DESC, created_at DESC LIMIT 1').get(custId);
+  }
+
+  // 2. Authoritative Database Price & Stock Check
+  const summary = calculateAuthoritativeSummary(custId, items);
+  if (summary.items.length === 0) {
+    return res.status(400).json({ error: 'Your cart is empty. Please add products to proceed.' });
+  }
+
+  const finalAmount = summary.total_amount;
+  const orderNumber = Math.floor(1000 + Math.random() * 9000);
+  const orderId = `ORD-${orderNumber}`;
+  const razorpayOrderId = `rzp_order_${Date.now()}`;
+  const nowStr = new Date().toISOString();
+
+  // 3. Create initial order in CREATED / PENDING status
+  db.prepare(`
+    INSERT INTO orders (
+      id, customer_id, total_amount, subtotal_amount, discount_amount,
+      status, payment_method, payment_status, shipping_address_json, razorpay_order_id, created_at
+    ) VALUES (?, ?, ?, ?, ?, 'CREATED', ?, 'PENDING', ?, ?, ?)
+  `).run(
+    orderId,
+    custId,
+    finalAmount,
+    summary.subtotal,
+    summary.discount,
+    payment_method.toUpperCase(),
+    targetAddress ? JSON.stringify(targetAddress) : null,
+    razorpayOrderId,
+    nowStr
+  );
 
   const insertItem = db.prepare(`
     INSERT INTO order_items (id, order_id, product_id, merchant_id, quantity, price)
     VALUES (?, ?, ?, ?, ?, ?)
   `);
 
-  for (const it of verifiedItems) {
+  for (const it of summary.items) {
     insertItem.run(
       `oi_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
       orderId,
@@ -1780,46 +2080,53 @@ function handleCreateOrder(req, res) {
     );
   }
 
-  logAudit('Checkout Agent', custId, 'ORDER_CREATED', `Initiated checkout for Order ${orderId} (₹${finalAmount.toLocaleString('en-IN')})`, {
+  logAudit('Checkout Agent', custId, 'CHECKOUT_STARTED', `Initiated ${payment_method.toUpperCase()} checkout for Order ${orderId} (₹${finalAmount.toLocaleString('en-IN')})`, {
     order_id: orderId,
     razorpay_order_id: razorpayOrderId,
     amount: finalAmount,
-    items_count: verifiedItems.length
+    payment_method: payment_method.toUpperCase(),
+    items_count: summary.items.length
   });
 
   res.json({
     id: razorpayOrderId,
     db_order_id: orderId,
     amount: Math.round(finalAmount * 100),
+    total_amount: finalAmount,
     currency: 'INR',
-    customer_id: custId
+    payment_method: payment_method.toUpperCase(),
+    customer_id: custId,
+    shipping_address: targetAddress
   });
 }
 
 function handleVerifyPayment(req, res) {
-  const { razorpay_order_id, razorpay_payment_id, customer_id } = req.body;
+  const { razorpay_order_id, razorpay_payment_id, payment_mode, customer_id } = req.body;
   const cust = getAuthenticatedCustomer(req);
   const custId = cust?.id || customer_id || 'cust_demo_01';
 
   // 1. Get the order
-  const order = db.prepare('SELECT * FROM orders WHERE razorpay_order_id = ?').get(razorpay_order_id);
+  const order = db.prepare('SELECT * FROM orders WHERE razorpay_order_id = ? OR id = ?').get(razorpay_order_id, razorpay_order_id);
   if (!order) {
-    return res.status(404).json({ status: 'FAILED', message: 'Order not found' });
+    return res.status(404).json({ status: 'FAILED', message: 'Order record not found for payment verification.' });
   }
 
-  // 2. Mark order as PAID with payment ID
+  // 2. Mark order as PAID & CONFIRMED
   const payId = razorpay_payment_id || `pay_${Date.now()}`;
+  const resolvedPaymentMethod = (payment_mode || order.payment_method || 'CARD').toUpperCase();
+
   db.prepare(`
-    UPDATE orders SET status = 'PAID', razorpay_payment_id = ?
+    UPDATE orders 
+    SET status = 'CONFIRMED', payment_status = 'PAID', payment_method = ?, razorpay_payment_id = ?
     WHERE id = ?
-  `).run(payId, order.id);
+  `).run(resolvedPaymentMethod, payId, order.id);
 
   // 3. Decrement inventory in products table
   const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id);
   const updateStock = db.prepare('UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ?');
   for (const it of items) {
     updateStock.run(it.quantity, it.product_id);
-    logAudit('Inventory Agent', it.merchant_id, 'INVENTORY_UPDATED', `Decreased stock by ${it.quantity} for product ${it.product_id} after paid order ${order.id}`, {
+    logAudit('Inventory Agent', it.merchant_id, 'INVENTORY_UPDATED', `Decreased stock by ${it.quantity} for product ${it.product_id} after confirmed payment on Order ${order.id}`, {
       order_id: order.id,
       product_id: it.product_id,
       quantity_sold: it.quantity
@@ -1829,20 +2136,39 @@ function handleVerifyPayment(req, res) {
   // 4. Clear Customer's Cart
   AgentTools.clearCart(custId);
 
-  // 5. Log Payment Success Audit Event
-  logAudit('Checkout Agent', custId, 'PAYMENT_SUCCESS', `Razorpay test payment verified: ${payId} for Order ${order.id}`, {
+  // 5. Parse Shipping Address
+  let parsedAddress = null;
+  try {
+    parsedAddress = order.shipping_address_json ? JSON.parse(order.shipping_address_json) : null;
+  } catch (_) {}
+
+  // 6. Log Audit Events
+  logAudit('Checkout Agent', custId, 'PAYMENT_SUCCESS', `Razorpay test payment verified: ${payId} for Order ${order.id} (₹${order.total_amount.toLocaleString('en-IN')}) via ${resolvedPaymentMethod}`, {
     order_id: order.id,
     razorpay_order_id,
     razorpay_payment_id: payId,
     status: 'PAID',
-    amount: order.total_amount
+    amount: order.total_amount,
+    payment_method: resolvedPaymentMethod
+  });
+
+  logAudit('Order Agent', custId, 'ORDER_CONFIRMED', `Order ${order.id} marked CONFIRMED after successful Razorpay verification.`, {
+    order_id: order.id,
+    order_status: 'CONFIRMED',
+    payment_status: 'PAID'
   });
 
   res.json({
     status: 'SUCCESS',
-    message: 'Payment verified and recorded in database!',
-    order_id: razorpay_order_id,
-    payment_id: payId
+    message: 'Payment verified and order confirmed!',
+    order_id: order.id,
+    payment_id: payId,
+    amount: order.total_amount,
+    payment_method: resolvedPaymentMethod,
+    payment_status: 'PAID',
+    order_status: 'CONFIRMED',
+    shipping_address: parsedAddress,
+    estimated_delivery: '2-4 business days'
   });
 }
 
@@ -1852,10 +2178,10 @@ function handleSimulateFailure(req, res) {
   const custId = cust?.id || customer_id || 'cust_demo_01';
 
   if (razorpay_order_id) {
-    db.prepare("UPDATE orders SET status = 'PAYMENT_FAILED' WHERE razorpay_order_id = ?").run(razorpay_order_id);
+    db.prepare("UPDATE orders SET status = 'PAYMENT_FAILED', payment_status = 'FAILED' WHERE razorpay_order_id = ? OR id = ?").run(razorpay_order_id, razorpay_order_id);
   }
 
-  logAudit('Checkout Agent', custId, 'PAYMENT_FAILED', `Payment simulation failed: ${reason || 'Gateway timeout / Card declined'}. Cart preserved.`, {
+  logAudit('Checkout Agent', custId, 'PAYMENT_FAILED', `Payment simulation failed: ${reason || 'Gateway timeout / Card declined'}. Cart preserved intact.`, {
     razorpay_order_id,
     amount,
     reason: reason || 'Gateway timeout / Card declined',
@@ -1864,10 +2190,64 @@ function handleSimulateFailure(req, res) {
 
   res.json({
     status: 'FAILED',
-    message: reason || "Payment wasn't completed. Your cart is still saved.",
+    message: reason || "Payment was not completed. Your cart is still saved.",
     order_id: razorpay_order_id
   });
 }
+
+// Routes: Orders History
+app.get('/api/orders/customer/:customerId', (req, res) => {
+  const cust = getAuthenticatedCustomer(req);
+  const custId = cust?.id || req.params.customerId || 'cust_demo_01';
+
+  const orders = db.prepare('SELECT * FROM orders WHERE customer_id = ? ORDER BY created_at DESC').all(custId);
+
+  const fullOrders = orders.map(o => {
+    const items = db.prepare(`
+      SELECT oi.product_id, oi.quantity, oi.price, p.name, p.image_url, p.merchant_name
+      FROM order_items oi
+      LEFT JOIN products p ON oi.product_id = p.id
+      WHERE oi.order_id = ?
+    `).all(o.id);
+
+    let address = null;
+    try {
+      address = o.shipping_address_json ? JSON.parse(o.shipping_address_json) : null;
+    } catch (_) {}
+
+    return {
+      id: o.id,
+      customer_id: o.customer_id,
+      total_amount: o.total_amount,
+      subtotal_amount: o.subtotal_amount,
+      discount_amount: o.discount_amount || 0,
+      status: o.status,
+      payment_method: o.payment_method || 'CARD',
+      payment_status: o.payment_status || (o.status === 'PAID' ? 'PAID' : 'PENDING'),
+      shipping_address: address,
+      razorpay_order_id: o.razorpay_order_id,
+      razorpay_payment_id: o.razorpay_payment_id,
+      created_at: o.created_at,
+      items: items.map(it => ({
+        product_id: it.product_id,
+        name: it.name || 'Product',
+        merchant_name: it.merchant_name || 'In-Store',
+        quantity: it.quantity,
+        price: it.price,
+        image_url: it.image_url,
+        item_total: it.price * it.quantity
+      }))
+    };
+  });
+
+  res.json(fullOrders);
+});
+
+app.get('/api/customer/orders', (req, res) => {
+  const cust = getAuthenticatedCustomer(req);
+  const custId = cust?.id || 'cust_demo_01';
+  return app._router.handle({ ...req, url: `/api/orders/customer/${custId}`, method: 'GET' }, res);
+});
 
 app.post('/api/payments/create-order', handleCreateOrder);
 app.post('/api/razorpay/create-order', handleCreateOrder);
@@ -1998,15 +2378,34 @@ app.get('/api/merchant/orders', (req, res) => {
   const rows = db.prepare(`
     SELECT oi.id as item_id, oi.order_id, oi.quantity, oi.price,
            p.name as product_name, p.image_url,
-           o.customer_id, o.status as order_status, o.created_at, o.razorpay_payment_id
+           o.customer_id, u.name as customer_name, u.email as customer_email,
+           o.status as order_status, o.payment_method, o.payment_status,
+           o.shipping_address_json, o.created_at, o.razorpay_payment_id
     FROM order_items oi
     JOIN orders o ON oi.order_id = o.id
     JOIN products p ON oi.product_id = p.id
+    LEFT JOIN users u ON o.customer_id = u.id
     WHERE oi.merchant_id = ?
     ORDER BY o.created_at DESC
   `).all(merchant.merchant_id);
 
-  res.json(rows);
+  const formattedRows = rows.map(r => {
+    let address = null;
+    try {
+      address = r.shipping_address_json ? JSON.parse(r.shipping_address_json) : null;
+    } catch (_) {}
+
+    return {
+      ...r,
+      shipping_address: address,
+      customer_name: address?.full_name || r.customer_name || 'Verified Customer',
+      payment_method: r.payment_method || 'CARD',
+      payment_status: r.payment_status || (r.order_status === 'PAID' ? 'PAID' : 'PENDING'),
+      order_status: r.order_status || 'CONFIRMED'
+    };
+  });
+
+  res.json(formattedRows);
 });
 
 // GET /api/merchant/insights (Computes dashboard metrics solely for current merchant)
@@ -2021,16 +2420,18 @@ app.get('/api/merchant/insights', (req, res) => {
   const productsCount = merchantProds.length;
 
   const merchantOrderItems = db.prepare(`
-    SELECT oi.*, o.status as order_status
+    SELECT oi.*, o.status as order_status, o.payment_status, o.payment_method
     FROM order_items oi
     JOIN orders o ON oi.order_id = o.id
     WHERE oi.merchant_id = ?
   `).all(mId);
 
-  const paidItems = merchantOrderItems.filter(it => it.order_status === 'PAID');
+  // Revenue rule: Count ONLY verified PAID orders (exclude pending COD)
+  const paidItems = merchantOrderItems.filter(it => it.payment_status === 'PAID' || it.order_status === 'PAID');
   const totalSales = paidItems.reduce((sum, it) => sum + (it.price * it.quantity), 0);
   const totalOrders = new Set(merchantOrderItems.map(it => it.order_id)).size;
   const paidOrdersCount = new Set(paidItems.map(it => it.order_id)).size;
+  const pendingCodOrdersCount = new Set(merchantOrderItems.filter(it => it.payment_method === 'COD' && it.payment_status === 'PENDING').map(it => it.order_id)).size;
   const avgBasket = paidOrdersCount > 0 ? Math.round(totalSales / paidOrdersCount) : 0;
 
   // Real opportunities tailored to this merchant's catalog
@@ -2052,16 +2453,17 @@ app.get('/api/merchant/insights', (req, res) => {
   res.json({
     merchant_id: mId,
     store_name: merchant.store_name,
-    has_data: paidOrdersCount > 0,
+    has_data: paidOrdersCount > 0 || totalOrders > 0,
     metrics: {
       total_sales: totalSales,
       total_orders: totalOrders,
       paid_orders: paidOrdersCount,
+      pending_cod_orders: pendingCodOrdersCount,
       average_basket: avgBasket,
       ai_assisted_orders: paidOrdersCount,
       active_catalog_products: productsCount,
       conversion_rate: totalOrders > 0 ? `${((paidOrdersCount / totalOrders) * 100).toFixed(1)}%` : '0%',
-      status_notice: paidOrdersCount > 0 ? 'Live real-time metrics computed from your SQLite database.' : 'Not enough historical transaction data yet. Live metrics update with new customer orders.'
+      status_notice: paidOrdersCount > 0 ? 'Live real-time metrics computed from your SQLite database (Paid orders only).' : 'Live metrics update with verified customer orders.'
     },
     next_best_actions: nextBestActions,
     active_campaigns: campaigns

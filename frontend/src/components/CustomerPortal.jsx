@@ -76,7 +76,7 @@ function FormattedMessage({ text, sender }) {
   );
 }
 
-export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdate }) {
+export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdate, onOpenCheckout, onNavigateToOrders }) {
   const customerId = currentUser?.id || 'cust_demo_01';
 
   const [inputMessage, setInputMessage] = useState('');
@@ -465,24 +465,8 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       return;
     }
 
-    try {
-      setIsLoading(true);
-      const res = await fetch('http://localhost:8000/api/razorpay/create-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: product.price,
-          customer_id: customerId,
-          items: [{ product_id: product.id || product.product_id, name: product.name, price: product.price, quantity: 1 }]
-        })
-      });
-      const order = await res.json();
-      setIsLoading(false);
-      setCheckoutOrder(order);
-    } catch (err) {
-      console.error(err);
-      setIsLoading(false);
-      showNotification('Failed to initialize checkout', 'error');
+    if (onOpenCheckout) {
+      onOpenCheckout([{ product_id: product.id || product.product_id, name: product.name, price: product.price, quantity: 1 }]);
     }
   };
 
@@ -1810,24 +1794,6 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
 
           </div>
         </div>
-      )}
-
-      {/* RAZORPAY CHECKOUT MODAL */}
-      {checkoutOrder && (
-        <RazorpayModal
-          orderData={checkoutOrder}
-          onClose={() => setCheckoutOrder(null)}
-          onSuccess={(res) => {
-            setCheckoutOrder(null);
-            showNotification(`Payment successful! Razorpay ID: ${res.payment_id}`);
-            if (onCartUpdate) onCartUpdate();
-            if (onAuditUpdate) onAuditUpdate();
-          }}
-          onFailure={(err) => {
-            showNotification(err?.message || 'Payment simulation failed', 'error');
-            if (onAuditUpdate) onAuditUpdate();
-          }}
-        />
       )}
 
     </div>

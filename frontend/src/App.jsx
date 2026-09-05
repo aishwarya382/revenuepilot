@@ -8,7 +8,7 @@ import CustomerOrdersView from './components/CustomerOrdersView';
 import MerchantPortal from './components/MerchantPortal';
 import AuditTrailDrawer from './components/AuditTrailDrawer';
 import CartDrawer from './components/CartDrawer';
-import RazorpayModal from './components/RazorpayModal';
+import CheckoutModal from './components/CheckoutModal';
 
 export default function App() {
   const { user: currentUser, token, logout, isLoading } = useAuth();
@@ -20,8 +20,9 @@ export default function App() {
   const [isAuditOpen, setIsAuditOpen] = useState(false);
   const [auditLogs, setAuditLogs] = useState([]);
 
-  // Checkout Modal State from Cart Drawer
-  const [cartCheckoutOrder, setCartCheckoutOrder] = useState(null);
+  // Checkout Modal State
+  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [checkoutItems, setCheckoutItems] = useState([]);
 
   // Sync activeTab when user logs in or role changes
   useEffect(() => {
@@ -96,28 +97,10 @@ export default function App() {
     }
   };
 
-  const handleCartCheckout = async () => {
-    if (!currentUser || cartData.items.length === 0) return;
-    try {
-      const headers = {
-        'Content-Type': 'application/json',
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-      };
-      const res = await fetch('http://localhost:8000/api/razorpay/create-order', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          amount: cartData.total_amount,
-          customer_id: currentUser.id,
-          items: cartData.items
-        })
-      });
-      const order = await res.json();
-      setIsCartOpen(false);
-      setCartCheckoutOrder(order);
-    } catch (err) {
-      console.error(err);
-    }
+  const handleStartCheckout = (customItems = null) => {
+    setIsCartOpen(false);
+    setCheckoutItems(customItems || cartData.items);
+    setIsCheckoutOpen(true);
   };
 
   // Prevent flash while verifying active session on page refresh
@@ -200,6 +183,8 @@ export default function App() {
                   currentUser={currentUser}
                   onCartUpdate={fetchCart}
                   onAuditUpdate={fetchAuditLogs}
+                  onOpenCheckout={handleStartCheckout}
+                  onNavigateToOrders={() => setActiveTab('orders')}
                 />
               )}
               {activeTab === 'orders' && (
@@ -224,7 +209,7 @@ export default function App() {
         onClose={() => setIsCartOpen(false)}
         cartData={cartData}
         onRemoveItem={handleRemoveCartItem}
-        onCheckout={handleCartCheckout}
+        onCheckout={() => handleStartCheckout(cartData.items)}
       />
 
       {/* Audit Trail Drawer Modal */}
@@ -234,22 +219,22 @@ export default function App() {
         auditLogs={auditLogs}
       />
 
-      {/* Razorpay Checkout Modal for Cart */}
-      {cartCheckoutOrder && (
-        <RazorpayModal
-          orderData={cartCheckoutOrder}
-          onClose={() => setCartCheckoutOrder(null)}
-          onSuccess={() => {
-            setCartCheckoutOrder(null);
-            fetchCart();
-            fetchAuditLogs();
-            setActiveTab('orders'); // Jump to orders view
-          }}
-          onFailure={() => {
-            fetchAuditLogs();
-          }}
-        />
-      )}
+      {/* Complete Step-Based Checkout Modal */}
+      <CheckoutModal
+        isOpen={isCheckoutOpen}
+        onClose={() => setIsCheckoutOpen(false)}
+        items={checkoutItems}
+        currentUser={currentUser}
+        token={token}
+        onOrderCompleted={(order) => {
+          fetchCart();
+          fetchAuditLogs();
+        }}
+        onNavigateToOrders={() => {
+          setIsCheckoutOpen(false);
+          setActiveTab('orders');
+        }}
+      />
 
     </div>
   );

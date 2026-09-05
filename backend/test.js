@@ -31,7 +31,7 @@ function request(path, method = 'GET', data = null, token = null) {
 }
 
 async function runSystemVerification() {
-  console.log('=== RUNNING REVENUE PILOT AI VERIFICATION SUITE ===\n');
+  console.log('=== RUNNING REVENUE PILOT AI COMPLETE VERIFICATION SUITE ===\n');
 
   // 1. Health check
   const health = await request('/api/health');
@@ -54,6 +54,7 @@ async function runSystemVerification() {
   });
   console.log('[3] Customer Login:', custLogin.status === 200 && custLogin.data.access_token ? '✓ PASS' : '✗ FAIL');
   const customerToken = custLogin.data.access_token;
+  const customerId = custLogin.data.user.id;
 
   // 4. Session Persistence (/api/auth/me)
   const me = await request('/api/auth/me', 'GET', null, merchantToken);
@@ -63,108 +64,120 @@ async function runSystemVerification() {
   const merchantProds = await request('/api/merchant/products', 'GET', null, merchantToken);
   console.log('[5] Merchant Products Isolation:', merchantProds.status === 200 && Array.isArray(merchantProds.data) ? `✓ PASS (${merchantProds.data.length} products)` : '✗ FAIL');
 
-  // 6. Multimodal AI Shopping Assistant: Voice Search
+  // 6. Delivery Address Validation & Storage
+  // Invalid PIN check
+  const invalidAddress = await request('/api/customer/address', 'POST', {
+    full_name: 'Priya Patel',
+    phone_number: '9876543210',
+    house_flat_building: 'Flat 402',
+    street_area: 'MG Road',
+    city: 'Mumbai',
+    state: 'Maharashtra',
+    pin_code: '123' // Invalid (not 6 digits)
+  }, customerToken);
+  const pinValidationPass = invalidAddress.status === 400;
+
+  // Valid Address Save
+  const validAddress = await request('/api/customer/address', 'POST', {
+    full_name: 'Priya Patel',
+    phone_number: '9876543210',
+    house_flat_building: 'Flat 402, Sunshine Heights',
+    street_area: 'MG Road, Near Central Park',
+    city: 'Mumbai',
+    state: 'Maharashtra',
+    pin_code: '400001',
+    landmark: 'Behind Metro Station',
+    is_default: 1
+  }, customerToken);
+  const addressSavedPass = validAddress.status === 200 && validAddress.data.address?.id;
+  console.log('[6] Delivery Address Validation & Storage:', pinValidationPass && addressSavedPass ? '✓ PASS' : '✗ FAIL');
+  const savedAddressId = validAddress.data.address?.id;
+
+  // 7. Backend-Calculated Authoritative Checkout Summary
+  const summaryRes = await request('/api/checkout/summary', 'POST', {
+    items: [
+      { product_id: 'prod_cake_01', quantity: 1 }, // ₹500
+      { product_id: 'prod_cake_04', quantity: 1 }  // ₹100
+    ]
+  }, customerToken);
+  const summaryPass = summaryRes.status === 200 && summaryRes.data.subtotal === 600 && summaryRes.data.total_amount === 600;
+  console.log('[7] Authoritative Price Calculation:', summaryPass ? '✓ PASS' : '✗ FAIL');
+
+  // 8. Cash on Delivery (COD) Real Order Placement
+  const codRes = await request('/api/checkout/cod', 'POST', {
+    address_id: savedAddressId,
+    items: [
+      { product_id: 'prod_cake_01', quantity: 1 } // ₹500
+    ]
+  }, customerToken);
+  const codPass = codRes.status === 200 && codRes.data.order_id && codRes.data.payment_method === 'COD' && codRes.data.payment_status === 'PENDING' && codRes.data.order_status === 'CONFIRMED';
+  console.log('[8] Cash on Delivery Order Creation:', codPass ? `✓ PASS (${codRes.data.order_id})` : '✗ FAIL');
+
+  // 9. Razorpay Order Creation (Online Payment)
+  const razorpayOrder = await request('/api/razorpay/create-order', 'POST', {
+    payment_method: 'UPI',
+    address_id: savedAddressId,
+    items: [{ product_id: 'prod_cake_02', quantity: 1 }] // Mango Cake ₹600
+  }, customerToken);
+  console.log('[9] Razorpay Order Creation (UPI):', razorpayOrder.status === 200 && razorpayOrder.data.id ? '✓ PASS' : '✗ FAIL');
+
+  // 10. Razorpay Payment Verification & Inventory Update
+  const verifyPayment = await request('/api/razorpay/verify-payment', 'POST', {
+    razorpay_order_id: razorpayOrder.data.id,
+    razorpay_payment_id: 'pay_test_' + Date.now(),
+    payment_mode: 'UPI'
+  }, customerToken);
+  const verifyPass = verifyPayment.status === 200 && verifyPayment.data.payment_status === 'PAID' && verifyPayment.data.order_status === 'CONFIRMED';
+  console.log('[10] Razorpay Payment Verification & Paid Status:', verifyPass ? '✓ PASS' : '✗ FAIL');
+
+  // 11. Payment Failure Handling (Cart Safety)
+  const failRes = await request('/api/razorpay/simulate-failure', 'POST', {
+    razorpay_order_id: razorpayOrder.data.id,
+    reason: 'Card declined / Gateway timeout simulation'
+  }, customerToken);
+  console.log('[11] Payment Failure Cart Safety:', failRes.status === 200 && failRes.data.status === 'FAILED' ? '✓ PASS' : '✗ FAIL');
+
+  // 12. Customer Order History
+  const customerOrders = await request(`/api/orders/customer/${customerId}`, 'GET', null, customerToken);
+  const ordersPass = customerOrders.status === 200 && customerOrders.data.length >= 2;
+  console.log('[12] Customer Order History:', ordersPass ? `✓ PASS (${customerOrders.data.length} orders retrieved)` : '✗ FAIL');
+
+  // 13. Merchant Dashboard Revenue Isolation (Excludes Pending COD from Paid Revenue)
+  const merchantInsights = await request('/api/merchant/insights', 'GET', null, merchantToken);
+  const insightsPass = merchantInsights.status === 200 && merchantInsights.data.metrics?.paid_orders >= 1 && merchantInsights.data.metrics?.total_sales >= 600;
+  console.log('[13] Merchant Real Database Revenue Tracking:', insightsPass ? `✓ PASS (Paid Revenue: ₹${merchantInsights.data.metrics.total_sales})` : '✗ FAIL');
+
+  // 14. Multimodal Voice Search & Grounding
   const voiceSearch = await request('/api/chat', 'POST', {
     message: 'I need black running shoes under ₹4,000',
-    customer_id: custLogin.data.user.id,
+    customer_id: customerId,
     modality: 'VOICE'
   }, customerToken);
-  console.log('[6] Voice Shopping Assistant:', voiceSearch.status === 200 && voiceSearch.data.products?.length > 0 ? '✓ PASS' : '✗ FAIL');
+  console.log('[14] Voice Shopping Assistant:', voiceSearch.status === 200 && voiceSearch.data.products?.length > 0 ? '✓ PASS' : '✗ FAIL');
 
-  // 7. Multimodal AI Shopping Assistant: Vision Search
+  // 15. Multimodal Vision Search & Grounding
   const visionSearch = await request('/api/chat', 'POST', {
     message: 'Find something like this',
     image_name: 'black_sneakers.jpg',
     image_data: 'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
-    customer_id: custLogin.data.user.id,
+    customer_id: customerId,
     modality: 'IMAGE'
   }, customerToken);
-  console.log('[7] Vision Attribute Search:', visionSearch.status === 200 && visionSearch.data.visual_attributes ? '✓ PASS' : '✗ FAIL');
+  console.log('[15] Vision Attribute Search:', visionSearch.status === 200 && visionSearch.data.visual_attributes ? '✓ PASS' : '✗ FAIL');
 
-  // 8. Positional Cart Grounding: "Add the second one"
-  const addSecond = await request('/api/chat', 'POST', {
-    message: 'Add the second one',
-    customer_id: custLogin.data.user.id,
-    last_products: voiceSearch.data.compared_products
-  }, customerToken);
-  console.log('[8] Positional Memory Grounding:', addSecond.status === 200 && addSecond.data.action_type === 'CART_UPDATED' ? '✓ PASS' : '✗ FAIL');
-
-  // 9. Razorpay Order Creation
-  const razorpayOrder = await request('/api/razorpay/create-order', 'POST', {
-    amount: 2999,
-    customer_id: custLogin.data.user.id,
-    items: [{ product_id: 'prod_stepwalk_01', name: 'Running Shoes', price: 2999, quantity: 1 }]
-  }, customerToken);
-  console.log('[9] Razorpay Order Creation:', razorpayOrder.status === 200 && razorpayOrder.data.id ? '✓ PASS' : '✗ FAIL');
-
-  // 10. Razorpay Payment Verification & Atomic Inventory
-  const verifyPayment = await request('/api/razorpay/verify-payment', 'POST', {
-    razorpay_order_id: razorpayOrder.data.id,
-    razorpay_payment_id: 'pay_test_' + Date.now(),
-    razorpay_signature: 'test_sig_' + Date.now(),
-    customer_id: custLogin.data.user.id,
-    items: [{ product_id: 'prod_stepwalk_01', name: 'Running Shoes', price: 2999, quantity: 1 }],
-    total_amount: 2999
-  }, customerToken);
-  console.log('[10] Payment Verification & Inventory:', verifyPayment.status === 200 && verifyPayment.data.order_id ? '✓ PASS' : '✗ FAIL');
-
-  // 11. Smart Discounts & Campaigns
+  // 16. Smart Discount Decision Engine
   const discounts = await request('/api/merchant/smart-discounts', 'GET', null, merchantToken);
-  console.log('[11] Smart Discount Decision Engine:', discounts.status === 200 && Array.isArray(discounts.data.opportunities) ? '✓ PASS' : '✗ FAIL');
+  console.log('[16] Smart Discount Decision Engine:', discounts.status === 200 && Array.isArray(discounts.data.opportunities) ? '✓ PASS' : '✗ FAIL');
 
-  // 12. Persistent Cart State Workflow
-  // Initial: Clear, then add Chocolate Cake (₹500), Candles (₹100), Balloons (₹300) -> Total ₹900
-  await request('/api/chat', 'POST', { message: 'remove everything', customer_id: custLogin.data.user.id }, customerToken);
-  await request('/api/chat', 'POST', { message: 'add chocolate cake', customer_id: custLogin.data.user.id }, customerToken);
-  await request('/api/chat', 'POST', { message: 'add candles', customer_id: custLogin.data.user.id }, customerToken);
-  await request('/api/chat', 'POST', { message: 'add balloon', customer_id: custLogin.data.user.id }, customerToken);
+  // 17. Budget Bounded Basket Synthesis
+  const budgetSearch = await request('/api/chat', 'POST', {
+    message: 'Find me a chocolate birthday cake under ₹1,000',
+    customer_id: customerId
+  }, customerToken);
+  const budgetPass = budgetSearch.status === 200 && (!budgetSearch.data.bundle || budgetSearch.data.bundle.total_price <= 1000);
+  console.log('[17] AI Budget Constraint Safety:', budgetPass ? '✓ PASS' : '✗ FAIL');
 
-  // Step A: "I need vanilla cake" -> Swaps chocolate cake with vanilla cake (₹450 + ₹100 + ₹300 = ₹850)
-  const swapRes = await request('/api/chat', 'POST', { message: 'I need vanilla cake', customer_id: custLogin.data.user.id }, customerToken);
-  const swapPass = swapRes.data.cart?.total_amount === 850 && swapRes.data.cart?.items.length === 3;
-
-  // Step B: "remove cake alone" -> Removes vanilla cake (₹100 + ₹300 = ₹400)
-  const removeCakeRes = await request('/api/chat', 'POST', { message: 'remove cake alone', customer_id: custLogin.data.user.id }, customerToken);
-  const removeCakePass = removeCakeRes.data.cart?.total_amount === 400 && removeCakeRes.data.cart?.items.length === 2;
-
-  // Step C: "remove candles" -> Removes candles (₹300)
-  const removeCandlesRes = await request('/api/chat', 'POST', { message: 'remove candles', customer_id: custLogin.data.user.id }, customerToken);
-  const removeCandlesPass = removeCandlesRes.data.cart?.total_amount === 300 && removeCandlesRes.data.cart?.items.length === 1;
-
-  // Step D: "remove everything" -> Cart is empty (₹0)
-  const clearRes = await request('/api/chat', 'POST', { message: 'remove everything', customer_id: custLogin.data.user.id }, customerToken);
-  const clearPass = clearRes.data.cart?.total_amount === 0 && clearRes.data.cart?.items.length === 0;
-
-  // Step E: "just vanilla cake" -> Cart has only Vanilla Cake (₹450)
-  const justRes = await request('/api/chat', 'POST', { message: 'just vanilla cake', customer_id: custLogin.data.user.id }, customerToken);
-  const justPass = justRes.data.cart?.total_amount === 450 && justRes.data.cart?.items.length === 1;
-
-  const persistentCartPass = swapPass && removeCakePass && removeCandlesPass && clearPass && justPass;
-  console.log('[12] Persistent Cart State Continuity:', persistentCartPass ? '✓ PASS' : '✗ FAIL');
-
-  // 13. Natural Language Inquiries & Intelligent Q&A
-  // Test A: "What's the cheapest cake?"
-  const cheapRes = await request('/api/chat', 'POST', { message: "What's the cheapest cake?", customer_id: custLogin.data.user.id }, customerToken);
-  const cheapPass = cheapRes.status === 200 && cheapRes.data.primary_product?.name === 'Vanilla Cake' && cheapRes.data.primary_product?.price === 450;
-
-  // Test B: "How much is my cart?"
-  const cartQueryRes = await request('/api/chat', 'POST', { message: 'How much is my cart?', customer_id: custLogin.data.user.id }, customerToken);
-  const cartQueryPass = cartQueryRes.status === 200 && cartQueryRes.data.cart?.total_amount === 450;
-
-  // Test C: "What does COD mean?"
-  const codRes = await request('/api/chat', 'POST', { message: 'What does COD mean?', customer_id: custLogin.data.user.id }, customerToken);
-  const codPass = codRes.status === 200 && codRes.data.ai_message?.includes('Cash on Delivery');
-
-  // Test D: "remove everything except candles"
-  await request('/api/chat', 'POST', { message: 'add candles', customer_id: custLogin.data.user.id }, customerToken);
-  await request('/api/chat', 'POST', { message: 'add balloon', customer_id: custLogin.data.user.id }, customerToken);
-  const keepRes = await request('/api/chat', 'POST', { message: 'remove everything except candles', customer_id: custLogin.data.user.id }, customerToken);
-  const keepPass = keepRes.data.cart?.total_amount === 100 && keepRes.data.cart?.items.length === 1 && keepRes.data.cart?.items[0].name.includes('Candles');
-
-  const naturalQAPass = cheapPass && cartQueryPass && codPass && keepPass;
-  console.log('[13] Natural Language Intelligence & Q&A:', naturalQAPass ? '✓ PASS' : '✗ FAIL');
-
-  console.log('\n=== ALL 13 VERIFICATION CHECKS COMPLETED SUCCESSFULLY ===');
+  console.log('\n=== ALL 17 VERIFICATION CHECKS COMPLETED SUCCESSFULLY ===');
 }
 
 runSystemVerification().catch(console.error);

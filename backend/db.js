@@ -46,11 +46,31 @@ db.exec(`
     price REAL NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS delivery_addresses (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    full_name TEXT NOT NULL,
+    phone_number TEXT NOT NULL,
+    house_flat_building TEXT NOT NULL,
+    street_area TEXT NOT NULL,
+    city TEXT NOT NULL,
+    state TEXT NOT NULL,
+    pin_code TEXT NOT NULL,
+    landmark TEXT,
+    is_default INTEGER DEFAULT 1,
+    created_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS orders (
     id TEXT PRIMARY KEY,
     customer_id TEXT NOT NULL,
     total_amount REAL NOT NULL,
+    subtotal_amount REAL,
+    discount_amount REAL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'CREATED',
+    payment_method TEXT DEFAULT 'CARD',
+    payment_status TEXT DEFAULT 'PENDING',
+    shipping_address_json TEXT,
     razorpay_order_id TEXT,
     razorpay_payment_id TEXT,
     created_at TEXT NOT NULL
@@ -115,6 +135,11 @@ db.exec(`
 // Clean legacy data & ensure columns
 try { db.exec("ALTER TABLE users ADD COLUMN merchant_id TEXT"); } catch (_) { }
 try { db.exec("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1"); } catch (_) { }
+try { db.exec("ALTER TABLE orders ADD COLUMN payment_method TEXT DEFAULT 'CARD'"); } catch (_) { }
+try { db.exec("ALTER TABLE orders ADD COLUMN payment_status TEXT DEFAULT 'PENDING'"); } catch (_) { }
+try { db.exec("ALTER TABLE orders ADD COLUMN subtotal_amount REAL"); } catch (_) { }
+try { db.exec("ALTER TABLE orders ADD COLUMN discount_amount REAL DEFAULT 0"); } catch (_) { }
+try { db.exec("ALTER TABLE orders ADD COLUMN shipping_address_json TEXT"); } catch (_) { }
 
 const { hashPassword } = require('./auth');
 const demoPasswordHash = hashPassword('Demo@12345');

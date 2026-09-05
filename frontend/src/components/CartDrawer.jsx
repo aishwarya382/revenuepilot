@@ -136,7 +136,7 @@ export default function CartDrawer({ isOpen, onClose, cartData, onRemoveItem, on
                 boxShadow: '0 4px 16px rgba(124, 58, 237, 0.35)'
               }}
             >
-              Checkout with Razorpay <ArrowRight size={16} />
+              Proceed to Checkout <ArrowRight size={16} />
             </button>
           </div>
         )}
