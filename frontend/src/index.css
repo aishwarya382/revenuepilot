@@ -25,6 +25,25 @@
   --shadow-glow: 0 4px 20px rgba(99, 102, 241, 0.15);
 }
 
+/* Dark mode */
+[data-theme='dark'] {
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --bg-card: #1e293b;
+  --bg-card-hover: #334155;
+  
+  --border-color: #334155;
+  --border-accent: #475569;
+  
+  --text-primary: #f1f5f9;
+  --text-secondary: #e2e8f0;
+  --text-muted: #cbd5e1;
+}
+
+html {
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;

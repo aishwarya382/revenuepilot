@@ -2,14 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { Package, Clock, CheckCircle2, AlertCircle, ShoppingBag, ArrowRight } from 'lucide-react';
 
 export default function CustomerOrdersView({ currentUser, onNavigateToShop }) {
-  const customerId = currentUser?.id || 'cust_demo_01';
+  const customerId = currentUser?.id;
   const [orders, setOrders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchOrders = async () => {
+    if (!customerId) {
+      setIsLoading(false);
+      return;
+    }
     try {
       setIsLoading(true);
-      const res = await fetch(`http://localhost:8000/api/orders/customer/${customerId}`);
+      const storedToken = localStorage.getItem('rp_access_token');
+      const headers = storedToken ? { 'Authorization': `Bearer ${storedToken}` } : {};
+      const res = await fetch(`http://localhost:8000/api/orders/customer/${customerId}`, { headers });
       const data = await res.json();
       setOrders(Array.isArray(data) ? data : []);
       setIsLoading(false);

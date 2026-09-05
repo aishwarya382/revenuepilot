@@ -58,6 +58,12 @@ const AgentTools = {
     const scored = [];
     const isWholeWord = (text, word) => new RegExp(`\\b${word}\\b`, 'i').test(text);
 
+    // Occasion and goal-based semantic keyword enrichment
+    const queryLower = query.toLowerCase();
+    const isBirthdayGoal = /birthday|anniversary|celebration|party|daughter|son|kid|child|festive/i.test(queryLower);
+    const isRunningGoal = /running|marathon|jogging|fitness|gym|workout|athletic|shoes|walk/i.test(queryLower);
+    const isTechGoal = /coding|programming|developer|gaming|work|office|study|student|laptop|computer/i.test(queryLower);
+
     for (const p of formatted) {
       const nameLower = (p.name || '').toLowerCase();
       const descLower = (p.description || '').toLowerCase();
@@ -67,11 +73,14 @@ const AgentTools = {
       let score = 0;
       let matchedCount = 0;
 
+      // Direct keyword matching (prefer whole-word and prevent sub-word false matches on short words)
       for (const kw of keywords) {
+        const allowSubstring = kw.length >= 4;
+
         if (isWholeWord(nameLower, kw)) {
           score += 25;
           matchedCount++;
-        } else if (nameLower.includes(kw)) {
+        } else if (allowSubstring && nameLower.includes(kw)) {
           score += 15;
           matchedCount++;
         }
@@ -79,7 +88,7 @@ const AgentTools = {
         if (isWholeWord(catLower, kw)) {
           score += 20;
           matchedCount++;
-        } else if (catLower.includes(kw) || kw.includes(catLower)) {
+        } else if (allowSubstring && (catLower.includes(kw) || kw.includes(catLower))) {
           score += 12;
           matchedCount++;
         }
@@ -87,13 +96,44 @@ const AgentTools = {
         if (isWholeWord(descLower, kw)) {
           score += 6;
           matchedCount++;
-        } else if (descLower.includes(kw)) {
+        } else if (allowSubstring && descLower.includes(kw)) {
           score += 3;
           matchedCount++;
         }
 
         if (isWholeWord(merchantLower, kw)) {
           score += 10;
+          matchedCount++;
+        }
+      }
+
+      // Goal & Occasion intent boosts
+      if (isBirthdayGoal && (merchantLower.includes('cake') || catLower.includes('cake') || catLower.includes('party') || catLower.includes('decoration'))) {
+        if (catLower.includes('cake') || nameLower.includes('cake')) {
+          score += 35; // Primary anchor product
+          matchedCount++;
+        } else {
+          score += 20;
+          matchedCount++;
+        }
+      }
+
+      if (isRunningGoal && (catLower.includes('footwear') || catLower.includes('running') || nameLower.includes('runner') || nameLower.includes('shoe'))) {
+        if (nameLower.includes('runner') || nameLower.includes('shoe')) {
+          score += 35; // Primary anchor product
+          matchedCount++;
+        } else {
+          score += 20;
+          matchedCount++;
+        }
+      }
+
+      if (isTechGoal && (catLower.includes('computers') || catLower.includes('laptops') || nameLower.includes('laptop') || nameLower.includes('ultrabook'))) {
+        if (nameLower.includes('laptop') || nameLower.includes('ultrabook')) {
+          score += 35; // Primary anchor product
+          matchedCount++;
+        } else {
+          score += 20;
           matchedCount++;
         }
       }
@@ -289,6 +329,8 @@ const AgentTools = {
       customer_id: customerId,
       items: items.map(it => ({
         ...it,
+        id: it.id,
+        item_id: it.id,
         item_total: it.price * it.quantity,
         image: it.image_url
       })),
@@ -340,7 +382,8 @@ const AgentTools = {
   },
 
   removeFromCart(customerId, itemId) {
-    db.prepare('DELETE FROM cart_items WHERE id = ?').run(itemId);
+    const cart = this.getOrCreateCart(customerId);
+    db.prepare('DELETE FROM cart_items WHERE cart_id = ? AND (id = ? OR product_id = ?)').run(cart.id, itemId, itemId);
     return this.getCart(customerId);
   },
 

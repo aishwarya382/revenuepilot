@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+import uuid
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from typing import Optional, List
 from sqlalchemy.orm import Session
@@ -7,8 +8,7 @@ from database import get_db
 from models import Product, Order, OrderItem, Campaign, User
 from schemas import SimulationApproveRequest
 from audit_service import log_event
-from auth import get_current_user
-import uuid
+from auth import require_merchant
 
 router = APIRouter(prefix="/api/merchant", tags=["merchant"])
 
@@ -21,18 +21,20 @@ class ProductCreateRequest(BaseModel):
     image_url: Optional[str] = "https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?auto=format&fit=crop&w=600&q=80"
 
 @router.get("/products")
-def get_merchant_products(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Return all products currently stored in the database."""
-    products = db.query(Product).filter(Product.merchant_id == current_user.id).order_by(Product.created_at.desc()).all()
+def get_merchant_products(current_user: User = Depends(require_merchant), db: Session = Depends(get_db)):
+    """Return all products belonging exclusively to the authenticated merchant."""
+    merchant_id = current_user.merchant_id or current_user.id
+    products = db.query(Product).filter(Product.merchant_id == merchant_id).order_by(Product.created_at.desc()).all()
     return products
 
 @router.post("/products")
-def create_merchant_product(req: ProductCreateRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def create_merchant_product(req: ProductCreateRequest, current_user: User = Depends(require_merchant), db: Session = Depends(get_db)):
     """Create a new product and assign it to the authenticated merchant."""
+    merchant_id = current_user.merchant_id or current_user.id
     new_id = f"prod_{uuid.uuid4().hex[:8]}"
     product = Product(
         id=new_id,
-        merchant_id=current_user.id,
+        merchant_id=merchant_id,
         name=req.name.strip(),
         category=req.category.strip(),
         price=float(req.price),
@@ -50,7 +52,7 @@ def create_merchant_product(req: ProductCreateRequest, current_user: User = Depe
         actor_id=current_user.id,
         action="Product Published",
         reason=f"Merchant added new product '{product.name}' in category '{product.category}' (Price: ₹{product.price})",
-        metadata={"product_id": product.id, "name": product.name, "category": product.category, "price": product.price, "stock": product.stock},
+        metadata={"product_id": product.id, "name": product.name, "category": product.category, "price": product.price, "stock": product.stock, "merchant_id": merchant_id},
         status="COMPLETED"
     )
     
@@ -61,8 +63,9 @@ def create_merchant_product(req: ProductCreateRequest, current_user: User = Depe
     }
 
 @router.delete("/products/{product_id}")
-def delete_merchant_product(product_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    product = db.query(Product).filter(Product.id == product_id, Product.merchant_id == current_user.id).first()
+def delete_merchant_product(product_id: str, current_user: User = Depends(require_merchant), db: Session = Depends(get_db)):
+    merchant_id = current_user.merchant_id or current_user.id
+    product = db.query(Product).filter(Product.id == product_id, Product.merchant_id == merchant_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found or not owned by merchant")
     db.delete(product)
@@ -70,9 +73,10 @@ def delete_merchant_product(product_id: str, current_user: User = Depends(get_cu
     return {"status": "SUCCESS", "message": f"Product {product_id} removed"}
 
 @router.get("/orders")
-def get_merchant_orders(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Retrieve all orders belonging to the authenticated merchant."""
-    orders = db.query(Order).filter(Order.merchant_id == current_user.id).order_by(Order.created_at.desc()).all()
+def get_merchant_orders(current_user: User = Depends(require_merchant), db: Session = Depends(get_db)):
+    """Retrieve all orders belonging strictly to the authenticated merchant."""
+    merchant_id = current_user.merchant_id or current_user.id
+    orders = db.query(Order).filter(Order.merchant_id == merchant_id).order_by(Order.created_at.desc()).all()
     result = []
     for o in orders:
         items = []
@@ -86,6 +90,7 @@ def get_merchant_orders(current_user: User = Depends(get_current_user), db: Sess
         result.append({
             "id": o.id,
             "customer_id": o.customer_id,
+            "merchant_id": o.merchant_id,
             "total_amount": o.total_amount,
             "status": o.status,
             "razorpay_order_id": o.razorpay_order_id,
@@ -96,23 +101,20 @@ def get_merchant_orders(current_user: User = Depends(get_current_user), db: Sess
     return result
 
 @router.get("/insights")
-def get_insights(db: Session = Depends(get_db)):
-    """Calculate real metrics strictly from the database without fabrication."""
-    paid_orders = db.query(Order).filter(Order.status == "PAID").all()
+def get_insights(current_user: User = Depends(require_merchant), db: Session = Depends(get_db)):
+    """Calculate real metrics strictly from the database for the authenticated merchant."""
+    merchant_id = current_user.merchant_id or current_user.id
+    paid_orders = db.query(Order).filter(Order.merchant_id == merchant_id, Order.status == "PAID").all()
     total_sales = sum(o.total_amount for o in paid_orders)
-    total_orders_count = db.query(Order).count()
+    total_orders_count = db.query(Order).filter(Order.merchant_id == merchant_id).count()
     paid_orders_count = len(paid_orders)
-    products_count = db.query(Product).count()
+    products_count = db.query(Product).filter(Product.merchant_id == merchant_id).count()
     customers_count = db.query(User).filter(User.role == "customer").count()
     
-    # Check if there is enough data
     has_sufficient_data = paid_orders_count > 0 or total_orders_count > 0
-    
-    # Calculate real conversion if data exists
     conversion_rate = f"{(paid_orders_count / total_orders_count * 100):.1f}%" if total_orders_count > 0 else "Not enough data yet"
     
-    # Generate opportunities grounded in real products in catalog
-    top_products = db.query(Product).order_by(Product.stock.desc()).limit(3).all()
+    top_products = db.query(Product).filter(Product.merchant_id == merchant_id).order_by(Product.stock.desc()).limit(3).all()
     opportunities = []
     for idx, p in enumerate(top_products):
         opportunities.append({
@@ -126,7 +128,7 @@ def get_insights(db: Session = Depends(get_db)):
             "discount_val": 1000.0 if p.price > 10000 else 200.0
         })
 
-    active_campaigns = db.query(Campaign).filter(Campaign.status == "ACTIVE").all()
+    active_campaigns = db.query(Campaign).filter(Campaign.merchant_id == merchant_id, Campaign.status == "ACTIVE").all()
     campaigns_data = [{
         "id": c.id,
         "name": c.name,
@@ -153,10 +155,11 @@ def get_insights(db: Session = Depends(get_db)):
     }
 
 @router.post("/approve-campaign")
-def approve_campaign(req: SimulationApproveRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def approve_campaign(req: SimulationApproveRequest, current_user: User = Depends(require_merchant), db: Session = Depends(get_db)):
+    merchant_id = current_user.merchant_id or current_user.id
     campaign = Campaign(
         id=f"camp_{uuid.uuid4().hex[:8]}",
-        merchant_id=current_user.id,
+        merchant_id=merchant_id,
         name=req.title or "Approved Campaign",
         type="BUNDLE_PROMO",
         status="ACTIVE",
@@ -173,7 +176,7 @@ def approve_campaign(req: SimulationApproveRequest, current_user: User = Depends
         actor_id=current_user.id,
         action="Campaign approved by merchant",
         reason=f"Merchant approved campaign '{campaign.name}'",
-        metadata={"campaign_id": campaign.id, "expected_revenue": campaign.expected_revenue},
+        metadata={"campaign_id": campaign.id, "expected_revenue": campaign.expected_revenue, "merchant_id": merchant_id},
         status="COMPLETED"
     )
 

@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "node backend/test_tenant_isolation.js"
+    "test": "node ../backend/test.js"
   },
   "dependencies": {
     "lucide-react": "^1.40.0",

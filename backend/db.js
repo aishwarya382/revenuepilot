@@ -86,39 +86,66 @@ db.exec(`
     actual_revenue REAL NOT NULL DEFAULT 0.0,
     created_at TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS smart_discounts (
+    id TEXT PRIMARY KEY,
+    merchant_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    strategy_type TEXT NOT NULL,
+    product_id TEXT,
+    product_name TEXT,
+    original_price REAL,
+    discount_percent REAL NOT NULL DEFAULT 5,
+    discount_amount REAL NOT NULL DEFAULT 0,
+    final_price REAL,
+    target_segment TEXT NOT NULL,
+    trigger_timing TEXT NOT NULL,
+    duration_hours INTEGER NOT NULL DEFAULT 24,
+    max_uses INTEGER NOT NULL DEFAULT 100,
+    used_count INTEGER NOT NULL DEFAULT 0,
+    channel TEXT NOT NULL DEFAULT 'IN_APP',
+    status TEXT NOT NULL DEFAULT 'PENDING',
+    ai_reason TEXT NOT NULL,
+    estimated_impact TEXT,
+    margin_safe INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+  );
 `);
 
-// Clean legacy data
-try {
-  db.exec("ALTER TABLE users ADD COLUMN merchant_id TEXT");
-} catch (_) { }
+// Clean legacy data & ensure columns
+try { db.exec("ALTER TABLE users ADD COLUMN merchant_id TEXT"); } catch (_) { }
+try { db.exec("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1"); } catch (_) { }
 
-// Sync Seed Users with exact merchant_id bindings
+const { hashPassword } = require('./auth_node');
+const demoPasswordHash = hashPassword('Demo@12345');
+
+// Sync Seed Users with exact merchant_id bindings and hashed passwords
 const seedUsers = [
-  // Customers
-  ['cust_demo_01', null, 'Aarav Sharma', 'aarav@college.edu', 'demo_hash', 'customer', null],
-  ['cust_demo_02', null, 'Priya Patel', 'priya@gmail.com', 'demo_hash', 'customer', null],
-  ['cust_demo_03', null, 'Rahul Verma', 'rahul@outlook.com', 'demo_hash', 'customer', null],
-
-  // Merchant 1: Celebration Cakes
-  ['merchant_celebration_cakes', 'merchant_celebration_cakes', 'Celebration Cakes', 'owner@celebrationcakes.in', 'demo_hash', 'merchant', 'Celebration Cakes'],
-  ['merchant_sweet_cakes', 'merchant_celebration_cakes', 'Celebration Cakes', 'owner@sweetcakes.in', 'demo_hash', 'merchant', 'Celebration Cakes'],
+  // Demo Accounts
+  ['merchant_celebration_cakes', 'merchant_celebration_cakes', 'Celebration Cakes', 'merchant@revenuepilot.ai', demoPasswordHash, 'merchant', 'Celebration Cakes', 1],
+  ['merchant_celebration_owner', 'merchant_celebration_cakes', 'Celebration Cakes Owner', 'owner@celebrationcakes.in', demoPasswordHash, 'merchant', 'Celebration Cakes', 1],
 
   // Merchant 2: StepWalk Shoes
-  ['merchant_stepwalk_shoes', 'merchant_stepwalk_shoes', 'StepWalk Shoes', 'owner@stepwalk.in', 'demo_hash', 'merchant', 'StepWalk Shoes'],
+  ['merchant_stepwalk_shoes', 'merchant_stepwalk_shoes', 'StepWalk Shoes', 'owner@stepwalk.in', demoPasswordHash, 'merchant', 'StepWalk Shoes', 1],
 
   // Merchant 3: TechStore Pro
-  ['merchant_tech_store', 'merchant_tech_store', 'TechStore Pro', 'admin@techstore.in', 'demo_hash', 'merchant', 'TechStore Pro']
+  ['merchant_tech_store', 'merchant_tech_store', 'TechStore Pro', 'admin@techstore.in', demoPasswordHash, 'merchant', 'TechStore Pro', 1],
+
+  // Customer Accounts
+  ['cust_demo_01', null, 'Demo Customer', 'customer@revenuepilot.ai', demoPasswordHash, 'customer', null, 1],
+  ['cust_demo_aarav', null, 'Aarav Sharma', 'aarav@college.edu', demoPasswordHash, 'customer', null, 1],
+  ['cust_demo_02', null, 'Priya Patel', 'priya@gmail.com', demoPasswordHash, 'customer', null, 1],
+  ['cust_demo_03', null, 'Rahul Verma', 'rahul@outlook.com', demoPasswordHash, 'customer', null, 1]
 ];
 
 const upsertUser = db.prepare(`
-  INSERT OR REPLACE INTO users (id, merchant_id, name, email, password_hash, role, store_name, created_at)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT OR REPLACE INTO users (id, merchant_id, name, email, password_hash, role, store_name, is_active, created_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const now = new Date().toISOString();
 for (const u of seedUsers) {
-  upsertUser.run(u[0], u[1], u[2], u[3], u[4], u[5], u[6], now);
+  upsertUser.run(u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7], now);
 }
 
 // Clear and seed isolated multi-tenant product catalogs

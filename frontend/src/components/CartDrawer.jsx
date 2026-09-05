@@ -58,7 +58,7 @@ export default function CartDrawer({ isOpen, onClose, cartData, onRemoveItem, on
           ) : (
             items.map((item) => (
               <div
-                key={item.item_id}
+                key={item.id || item.item_id || item.product_id}
                 style={{
                   display: 'flex',
                   gap: '12px',
@@ -70,7 +70,7 @@ export default function CartDrawer({ isOpen, onClose, cartData, onRemoveItem, on
                 }}
               >
                 <img
-                  src={item.image_url || 'https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?auto=format&fit=crop&w=600&q=80'}
+                  src={item.image_url || item.image || 'https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?auto=format&fit=crop&w=600&q=80'}
                   alt={item.name}
                   style={{ width: '54px', height: '54px', borderRadius: '8px', objectFit: 'cover' }}
                 />
@@ -86,9 +86,20 @@ export default function CartDrawer({ isOpen, onClose, cartData, onRemoveItem, on
                   </div>
                 </div>
                 <button
-                  onClick={() => onRemoveItem(item.item_id)}
+                  onClick={() => onRemoveItem(item.id || item.item_id || item.product_id)}
                   title="Remove from cart"
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: '6px' }}
+                  style={{
+                    background: '#fef2f2',
+                    border: '1px solid #fee2e2',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    color: '#dc2626',
+                    padding: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    transition: 'all 0.2s'
+                  }}
                 >
                   <Trash2 size={16} />
                 </button>

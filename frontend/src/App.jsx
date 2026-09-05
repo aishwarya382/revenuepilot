@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from './context/AuthContext';
 import AuthScreen from './components/AuthScreen';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
@@ -10,7 +11,7 @@ import CartDrawer from './components/CartDrawer';
 import RazorpayModal from './components/RazorpayModal';
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(null);
+  const { user: currentUser, token, logout, isLoading } = useAuth();
   const [activeTab, setActiveTab] = useState('customer'); // 'customer' | 'orders' | 'merchant'
   
   // Cart & Audit States
@@ -22,22 +23,28 @@ export default function App() {
   // Checkout Modal State from Cart Drawer
   const [cartCheckoutOrder, setCartCheckoutOrder] = useState(null);
 
-  // Load persisted user on initial mount
+  // Sync activeTab when user logs in or role changes
   useEffect(() => {
-    const storedUser = localStorage.getItem('currentUser');
-    if (storedUser) {
-      const parsed = JSON.parse(storedUser);
-      setCurrentUser(parsed);
-      setActiveTab(parsed.role === 'merchant' ? 'merchant' : 'customer');
+    if (currentUser) {
+      if (currentUser.role === 'merchant') {
+        setActiveTab('merchant');
+      } else {
+        if (activeTab === 'merchant') {
+          setActiveTab('customer');
+        }
+      }
     }
-  }, []);
+  }, [currentUser]);
 
   const fetchCart = async () => {
     if (!currentUser || currentUser.role === 'merchant') return;
     try {
-      const res = await fetch(`http://localhost:8000/api/cart/${currentUser.id}`);
-      const data = await res.json();
-      setCartData(data);
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const res = await fetch(`http://localhost:8000/api/cart/${currentUser.id}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setCartData(data);
+      }
     } catch (err) {
       console.error('Cart fetch error:', err);
     }
@@ -45,9 +52,12 @@ export default function App() {
 
   const fetchAuditLogs = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/audit-logs');
-      const data = await res.json();
-      setAuditLogs(data.audit_logs || []);
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const res = await fetch('http://localhost:8000/api/audit-logs', { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setAuditLogs(data.audit_logs || []);
+      }
     } catch (err) {
       console.error('Audit fetch error:', err);
     }
@@ -63,33 +73,26 @@ export default function App() {
       }, 5000);
       return () => clearInterval(interval);
     }
-  }, [currentUser]);
-
-  const handleLogin = (userObj) => {
-    setCurrentUser(userObj);
-    localStorage.setItem('currentUser', JSON.stringify(userObj));
-    if (userObj.role === 'merchant') {
-      setActiveTab('merchant');
-    } else {
-      setActiveTab('customer');
-    }
-  };
+  }, [currentUser, token]);
 
   const handleLogout = () => {
-    setCurrentUser(null);
-    localStorage.removeItem('currentUser');
+    logout();
     setCartData({ items: [], total_amount: 0, total_items: 0 });
   };
 
   const handleRemoveCartItem = async (itemId) => {
     if (!currentUser) return;
     try {
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
       const res = await fetch(`http://localhost:8000/api/cart/${currentUser.id}/items/${itemId}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers
       });
-      const data = await res.json();
-      setCartData(data);
-      fetchAuditLogs();
+      if (res.ok) {
+        const data = await res.json();
+        setCartData(data);
+        fetchAuditLogs();
+      }
     } catch (err) {
       console.error(err);
     }
@@ -98,9 +101,13 @@ export default function App() {
   const handleCartCheckout = async () => {
     if (!currentUser || cartData.items.length === 0) return;
     try {
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+      };
       const res = await fetch('http://localhost:8000/api/razorpay/create-order', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           amount: cartData.total_amount,
           customer_id: currentUser.id,
@@ -115,8 +122,43 @@ export default function App() {
     }
   };
 
+  // Prevent flash while verifying active session on page refresh
+  if (isLoading) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'linear-gradient(135deg, #ffffff 0%, #f9fafb 100%)',
+        fontFamily: "'Inter', sans-serif"
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{
+            width: '40px',
+            height: '40px',
+            border: '3px solid #e2e8f0',
+            borderTop: '3px solid #6366f1',
+            borderRadius: '50%',
+            animation: 'spin 0.8s linear infinite',
+            margin: '0 auto 16px auto'
+          }} />
+          <div style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: 600 }}>
+            Restoring RevenuePilot AI session...
+          </div>
+          <style>{`
+            @keyframes spin {
+              0% { transform: rotate(0deg); }
+              100% { transform: rotate(360deg); }
+            }
+          `}</style>
+        </div>
+      </div>
+    );
+  }
+
   if (!currentUser) {
-    return <AuthScreen onLogin={handleLogin} />;
+    return <AuthScreen onLogin={() => {}} />;
   }
 
   return (
@@ -126,7 +168,12 @@ export default function App() {
       <Header
         currentUser={currentUser}
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={(tab) => {
+          // Prevent role violations on client navigation
+          if (currentUser.role === 'customer' && tab === 'merchant') return;
+          if (currentUser.role === 'merchant' && tab !== 'merchant') return;
+          setActiveTab(tab);
+        }}
         onOpenAuditLog={() => setIsAuditOpen(true)}
         onOpenCart={() => setIsCartOpen(true)}
         cartCount={cartData.total_items || 0}
@@ -138,7 +185,11 @@ export default function App() {
         <Sidebar
           currentUser={currentUser}
           activeTab={activeTab}
-          setActiveTab={setActiveTab}
+          setActiveTab={(tab) => {
+            if (currentUser.role === 'customer' && tab === 'merchant') return;
+            if (currentUser.role === 'merchant' && tab !== 'merchant') return;
+            setActiveTab(tab);
+          }}
           onOpenAuditLog={() => setIsAuditOpen(true)}
         />
 

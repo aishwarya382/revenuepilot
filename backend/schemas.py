@@ -1,3 +1,4 @@
+import pydantic_patch
 from pydantic import BaseModel
 from typing import Optional, List, Any, Dict
 from datetime import datetime
@@ -7,20 +8,32 @@ class UserCreate(BaseModel):
     name: str
     email: str
     password: str
+    confirm_password: Optional[str] = None
     role: Optional[str] = "customer"
 
 class UserLogin(BaseModel):
     email: str
     password: str
+    role: Optional[str] = None
 
 class UserResponse(BaseModel):
     id: str
     name: str
     email: str
     role: str
+    merchant_id: Optional[str] = None
+    is_active: Optional[bool] = True
+    created_at: Optional[datetime] = None
 
     class Config:
+        from_attributes = True
         orm_mode = True
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserResponse
+
 
 # Product Schemas
 class ProductResponse(BaseModel):

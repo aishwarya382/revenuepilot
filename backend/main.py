@@ -1,3 +1,4 @@
+import pydantic_patch
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -143,12 +144,64 @@ def startup_event():
         db.add_all(seed_products)
         db.commit()
 
-    if db.query(User).count() == 0:
-        demo_customer = User(id="cust_demo_01", name="Aarav Sharma", email="aarav@college.edu", password_hash=get_password_hash("student123"), role="customer")
-        demo_merchant = User(id="merchant_demo_01", name="TechStore Admin", email="admin@techstore.in", password_hash=get_password_hash("merchant123"), role="merchant")
-        db.add_all([demo_customer, demo_merchant])
-        db.commit()
+    # Seed or ensure required demo accounts exist in database
+    demo_accounts = [
+        {
+            "id": "merchant_demo_01",
+            "name": "Demo Merchant",
+            "email": "merchant@revenuepilot.ai",
+            "password": "Demo@12345",
+            "role": "merchant",
+            "merchant_id": "merchant_demo_01"
+        },
+        {
+            "id": "cust_demo_01",
+            "name": "Demo Customer",
+            "email": "customer@revenuepilot.ai",
+            "password": "Demo@12345",
+            "role": "customer",
+            "merchant_id": None
+        },
+        {
+            "id": "cust_demo_aarav",
+            "name": "Aarav Sharma",
+            "email": "aarav@college.edu",
+            "password": "Demo@12345",
+            "role": "customer",
+            "merchant_id": None
+        },
+        {
+            "id": "merchant_demo_techstore",
+            "name": "TechStore Admin",
+            "email": "admin@techstore.in",
+            "password": "Demo@12345",
+            "role": "merchant",
+            "merchant_id": "merchant_demo_01"
+        }
+    ]
 
+    for acc in demo_accounts:
+        existing_user = db.query(User).filter(User.email == acc["email"]).first()
+        if not existing_user:
+            new_u = User(
+                id=acc["id"],
+                name=acc["name"],
+                email=acc["email"],
+                password_hash=get_password_hash(acc["password"]),
+                role=acc["role"],
+                merchant_id=acc["merchant_id"],
+                is_active=True
+            )
+            db.add(new_u)
+        else:
+            # Update password hash to ensure Demo@12345 is active and valid Argon2 hash
+            existing_user.password_hash = get_password_hash(acc["password"])
+            existing_user.role = acc["role"]
+            existing_user.is_active = True
+            if acc["merchant_id"]:
+                existing_user.merchant_id = acc["merchant_id"]
+    
+    db.commit()
     db.close()
 
 @app.get("/")
