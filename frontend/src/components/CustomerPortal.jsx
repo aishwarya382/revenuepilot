@@ -92,8 +92,11 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
   const [isListening, setIsListening] = useState(false);
   const [showVoiceModal, setShowVoiceModal] = useState(false);
   const [transcriptPreview, setTranscriptPreview] = useState('');
+  const [audioLevel, setAudioLevel] = useState(0);
   const recognitionRef = useRef(null);
   const mediaStreamRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const animationFrameRef = useRef(null);
 
   // System Notification
   const [notification, setNotification] = useState(null);
@@ -116,7 +119,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
     scrollToBottom();
   }, [messages, isLoading, isListening]);
 
-  // Clean up speech recognition on unmount
+  // Clean up speech recognition & audio analyser on unmount
   useEffect(() => {
     return () => {
       if (recognitionRef.current) {
@@ -133,6 +136,16 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
           // ignore
         }
       }
+      if (audioContextRef.current) {
+        try {
+          audioContextRef.current.close();
+        } catch {
+          // ignore
+        }
+      }
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
     };
   }, []);
 
@@ -142,17 +155,47 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
   };
 
   // ==========================================
-  // 1. VOICE SHOPPING (WEB SPEECH API + MIC ACCESS)
+  // 1. VOICE SHOPPING (WEB SPEECH API + AUDIO ANALYSER)
   // ==========================================
   const startListening = async () => {
     setShowVoiceModal(true);
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-    // Prompt for microphone permissions if getUserMedia is supported
+    // Start Web Audio API Volume Analyser
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mediaStreamRef.current = stream;
+
+        try {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          if (AudioContext) {
+            const audioCtx = new AudioContext();
+            audioContextRef.current = audioCtx;
+            const source = audioCtx.createMediaStreamSource(stream);
+            const analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 256;
+            source.connect(analyser);
+
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+
+            const updateVolume = () => {
+              if (!analyser) return;
+              analyser.getByteFrequencyData(dataArray);
+              let sum = 0;
+              for (let i = 0; i < bufferLength; i++) {
+                sum += dataArray[i];
+              }
+              const avg = sum / bufferLength;
+              setAudioLevel(Math.min(100, Math.round((avg / 128) * 100)));
+              animationFrameRef.current = requestAnimationFrame(updateVolume);
+            };
+            updateVolume();
+          }
+        } catch (ctxErr) {
+          console.warn('AudioContext volume meter notice:', ctxErr);
+        }
       } catch (micErr) {
         console.warn('Microphone permission request:', micErr);
       }
@@ -194,18 +237,12 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
         if (event.error === 'not-allowed' || event.error === 'permission-denied') {
           showNotification('Microphone access was denied. Please allow microphone permissions in browser settings.', 'error');
         } else if (event.error === 'network') {
-          showNotification('Voice recognition network issue. You can click any spoken query below.', 'error');
+          showNotification('Voice recognition network notice. You can click any spoken query below.', 'error');
         }
       };
 
       recognition.onend = () => {
         setIsListening(false);
-        if (mediaStreamRef.current) {
-          try {
-            mediaStreamRef.current.getTracks().forEach(track => track.stop());
-          } catch { /* ignore */ }
-          mediaStreamRef.current = null;
-        }
       };
 
       recognitionRef.current = recognition;
@@ -230,6 +267,17 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       } catch { /* ignore */ }
       mediaStreamRef.current = null;
     }
+    if (audioContextRef.current) {
+      try {
+        audioContextRef.current.close();
+      } catch { /* ignore */ }
+      audioContextRef.current = null;
+    }
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    setAudioLevel(0);
     setIsListening(false);
   };
 
@@ -1619,9 +1667,30 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
               marginBottom: '20px'
             }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                <span style={{ fontSize: '0.75rem', fontWeight: 800, color: isListening ? '#dc2626' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                  {isListening ? '🎙️ Live Voice Input' : 'Spoken Voice Query:'}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 800, color: isListening ? '#dc2626' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    {isListening ? '🎙️ Live Voice Input' : 'Spoken Voice Query:'}
+                  </span>
+                  {isListening && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '3px', height: '14px' }}>
+                      {[0.6, 1, 0.4, 0.8, 0.5, 0.9, 0.7].map((factor, barIdx) => {
+                        const height = Math.max(4, Math.round((audioLevel || 25) * factor * 0.18));
+                        return (
+                          <div
+                            key={barIdx}
+                            style={{
+                              width: '3px',
+                              height: `${height}px`,
+                              background: '#dc2626',
+                              borderRadius: '2px',
+                              transition: 'height 0.1s ease'
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
                 <button
                   onClick={isListening ? stopListening : startListening}
                   style={{
@@ -1646,7 +1715,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
                   setTranscriptPreview(e.target.value);
                   setInputMessage(e.target.value);
                 }}
-                placeholder={isListening ? "Listening... Your speech will appear here" : "Type or speak your shopping query..."}
+                placeholder={isListening ? "Listening to your voice... Speak now (or select a prompt below)" : "Type or speak your shopping query..."}
                 style={{
                   width: '100%',
                   border: '1px solid #cbd5e1',
