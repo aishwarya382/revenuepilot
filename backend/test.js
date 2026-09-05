@@ -112,7 +112,37 @@ async function runSystemVerification() {
   const discounts = await request('/api/merchant/smart-discounts', 'GET', null, merchantToken);
   console.log('[11] Smart Discount Decision Engine:', discounts.status === 200 && Array.isArray(discounts.data.opportunities) ? '✓ PASS' : '✗ FAIL');
 
-  console.log('\n=== ALL 11 VERIFICATION CHECKS COMPLETED SUCCESSFULLY ===');
+  // 12. Persistent Cart State Workflow
+  // Initial: Clear, then add Chocolate Cake (₹500), Candles (₹100), Balloons (₹300) -> Total ₹900
+  await request('/api/chat', 'POST', { message: 'remove everything', customer_id: custLogin.data.user.id }, customerToken);
+  await request('/api/chat', 'POST', { message: 'add chocolate cake', customer_id: custLogin.data.user.id }, customerToken);
+  await request('/api/chat', 'POST', { message: 'add candles', customer_id: custLogin.data.user.id }, customerToken);
+  await request('/api/chat', 'POST', { message: 'add balloon', customer_id: custLogin.data.user.id }, customerToken);
+
+  // Step A: "I need vanilla cake" -> Swaps chocolate cake with vanilla cake (₹450 + ₹100 + ₹300 = ₹850)
+  const swapRes = await request('/api/chat', 'POST', { message: 'I need vanilla cake', customer_id: custLogin.data.user.id }, customerToken);
+  const swapPass = swapRes.data.cart?.total_amount === 850 && swapRes.data.cart?.items.length === 3;
+
+  // Step B: "remove cake alone" -> Removes vanilla cake (₹100 + ₹300 = ₹400)
+  const removeCakeRes = await request('/api/chat', 'POST', { message: 'remove cake alone', customer_id: custLogin.data.user.id }, customerToken);
+  const removeCakePass = removeCakeRes.data.cart?.total_amount === 400 && removeCakeRes.data.cart?.items.length === 2;
+
+  // Step C: "remove candles" -> Removes candles (₹300)
+  const removeCandlesRes = await request('/api/chat', 'POST', { message: 'remove candles', customer_id: custLogin.data.user.id }, customerToken);
+  const removeCandlesPass = removeCandlesRes.data.cart?.total_amount === 300 && removeCandlesRes.data.cart?.items.length === 1;
+
+  // Step D: "remove everything" -> Cart is empty (₹0)
+  const clearRes = await request('/api/chat', 'POST', { message: 'remove everything', customer_id: custLogin.data.user.id }, customerToken);
+  const clearPass = clearRes.data.cart?.total_amount === 0 && clearRes.data.cart?.items.length === 0;
+
+  // Step E: "just vanilla cake" -> Cart has only Vanilla Cake (₹450)
+  const justRes = await request('/api/chat', 'POST', { message: 'just vanilla cake', customer_id: custLogin.data.user.id }, customerToken);
+  const justPass = justRes.data.cart?.total_amount === 450 && justRes.data.cart?.items.length === 1;
+
+  const persistentCartPass = swapPass && removeCakePass && removeCandlesPass && clearPass && justPass;
+  console.log('[12] Persistent Cart State Continuity:', persistentCartPass ? '✓ PASS' : '✗ FAIL');
+
+  console.log('\n=== ALL 12 VERIFICATION CHECKS COMPLETED SUCCESSFULLY ===');
 }
 
 runSystemVerification().catch(console.error);

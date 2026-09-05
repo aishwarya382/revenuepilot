@@ -336,6 +336,77 @@ function extractIntent(text = '') {
   };
 }
 
+// Helper to format persistent cart state for conversational responses
+function formatCartSummary(cart) {
+  if (!cart.items || cart.items.length === 0) {
+    return 'Your cart is currently empty.';
+  }
+  const lines = cart.items.map(it => `• **${it.name}** — ₹${it.price.toLocaleString('en-IN')}${it.quantity > 1 ? ` (Qty: ${it.quantity})` : ''}`);
+  return `Your current cart (${cart.total_items} item${cart.total_items > 1 ? 's' : ''}):\n${lines.join('\n')}\n\n**Total Payable: ₹${cart.total_amount.toLocaleString('en-IN')}**`;
+}
+
+// Helper to find a matching product in the database
+function findProductInCatalog(phrase) {
+  if (!phrase) return null;
+  const pLower = phrase.toLowerCase().trim();
+  const allProds = db.prepare("SELECT * FROM products WHERE status = 'published' AND stock > 0").all();
+
+  // 1. Exact name match
+  let match = allProds.find(p => p.name.toLowerCase() === pLower);
+  if (match) return match;
+
+  // 2. Specific item keywords
+  if (pLower.includes('vanilla') && pLower.includes('cake')) {
+    return allProds.find(p => p.id === 'prod_cake_03') || allProds.find(p => p.name.toLowerCase().includes('vanilla'));
+  }
+  if (pLower.includes('chocolate') && pLower.includes('cake')) {
+    return allProds.find(p => p.id === 'prod_cake_01') || allProds.find(p => p.name.toLowerCase().includes('chocolate'));
+  }
+  if (pLower.includes('mango') && pLower.includes('cake')) {
+    return allProds.find(p => p.id === 'prod_cake_02') || allProds.find(p => p.name.toLowerCase().includes('mango'));
+  }
+  if (pLower.includes('candle')) {
+    return allProds.find(p => p.id === 'prod_cake_04') || allProds.find(p => p.name.toLowerCase().includes('candle'));
+  }
+  if (pLower.includes('balloon')) {
+    return allProds.find(p => p.id === 'prod_cake_05') || allProds.find(p => p.name.toLowerCase().includes('balloon'));
+  }
+  if (pLower.includes('banner')) {
+    return allProds.find(p => p.id === 'prod_cake_06') || allProds.find(p => p.name.toLowerCase().includes('banner'));
+  }
+  if (pLower.includes('sneaker') || pLower.includes('casual')) {
+    return allProds.find(p => p.id === 'prod_shoe_02') || allProds.find(p => p.name.toLowerCase().includes('sneaker'));
+  }
+  if (pLower.includes('running') || (pLower.includes('shoe') && !pLower.includes('formal'))) {
+    return allProds.find(p => p.id === 'prod_shoe_01') || allProds.find(p => p.name.toLowerCase().includes('running'));
+  }
+  if (pLower.includes('formal') || pLower.includes('leather')) {
+    return allProds.find(p => p.id === 'prod_shoe_03') || allProds.find(p => p.name.toLowerCase().includes('formal'));
+  }
+  if (pLower.includes('cleaning') || pLower.includes('care kit')) {
+    return allProds.find(p => p.id === 'prod_shoe_04') || allProds.find(p => p.name.toLowerCase().includes('cleaning'));
+  }
+  if (pLower.includes('sock')) {
+    return allProds.find(p => p.id === 'prod_shoe_05') || allProds.find(p => p.name.toLowerCase().includes('sock'));
+  }
+  if (pLower.includes('laptop') || pLower.includes('notebook')) {
+    return allProds.find(p => p.id === 'prod_tech_01') || allProds.find(p => p.category.toLowerCase().includes('laptop'));
+  }
+  if (pLower.includes('headphone') || pLower.includes('audio')) {
+    return allProds.find(p => p.id === 'prod_tech_02') || allProds.find(p => p.name.toLowerCase().includes('headphone'));
+  }
+  if (pLower.includes('mouse')) {
+    return allProds.find(p => p.id === 'prod_tech_03') || allProds.find(p => p.name.toLowerCase().includes('mouse'));
+  }
+  if (pLower.includes('backpack') || pLower.includes('bag')) {
+    return allProds.find(p => p.id === 'prod_tech_04') || allProds.find(p => p.name.toLowerCase().includes('backpack'));
+  }
+
+  // 3. Substring match
+  match = allProds.find(p => pLower.includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(pLower));
+  return match || null;
+}
+
 // AI Multimodal Shopping Assistant Chat Handler
 async function handleAIChat(req, res) {
   const {
@@ -384,6 +455,300 @@ async function handleAIChat(req, res) {
   }
 
   const intent = extractIntent(userMessage);
+  const msgLower = userMessage.toLowerCase().trim();
+
+  // Read current active persistent cart from database
+  const currentCart = AgentTools.getCart(customerId);
+  const cartItems = currentCart.items || [];
+
+  // =========================================================================
+  // PERSISTENT CART RULE 1: EMPTY / CLEAR CART ("remove everything", "clear cart", "empty cart")
+  // =========================================================================
+  if (
+    /^(?:remove\s+everything|clear\s+(?:the\s+)?cart|empty\s+(?:the\s+)?cart|remove\s+all(?:\s+items)?|delete\s+all(?:\s+items)?|delete\s+everything|clear\s+all)$/i.test(msgLower) ||
+    msgLower === 'remove everything' ||
+    msgLower === 'empty cart' ||
+    msgLower === 'clear cart'
+  ) {
+    AgentTools.clearCart(customerId);
+    const updatedCart = AgentTools.getCart(customerId);
+    logAudit('Customer', customerId, 'Clear Cart via AI', 'Customer emptied cart', { modality: currentModality });
+
+    const aiMsg = `Emptied your cart.\n\nYour cart is currently empty.`;
+    return res.json({
+      intent: 'Clear Cart',
+      ai_message: aiMsg,
+      message: aiMsg,
+      cart: updatedCart,
+      cart_items: updatedCart.items,
+      primary_product: null,
+      products: [],
+      compared_products: [],
+      bundle: null,
+      tool_calls_executed: ['clear_cart'],
+      action_type: 'CART_UPDATED',
+      cart_updated: true,
+      modality: currentModality
+    });
+  }
+
+  // =========================================================================
+  // PERSISTENT CART RULE 2: EXPLICIT REMOVAL OF SPECIFIC ITEMS / CATEGORIES
+  // e.g. "remove cake", "remove cake alone", "remove all cakes", "remove chocolate cake", "remove candles", "remove balloon"
+  // =========================================================================
+  const isRemoveCmd = /^(?:remove|delete|drop|take\s+out|cancel|exclude|get\s+rid\s+of)\s+(.+)$/i.test(msgLower);
+  if (isRemoveCmd) {
+    let targetPhrase = msgLower
+      .replace(/^(?:remove|delete|drop|take\s+out|cancel|exclude|get\s+rid\s+of)\s+/i, '')
+      .replace(/^(?:the|all)\s+/i, '')
+      .replace(/\s+(?:alone|from\s+cart|please)$/i, '')
+      .trim();
+
+    let matchedItems = [];
+
+    if (targetPhrase === 'cake' || targetPhrase === 'cakes') {
+      matchedItems = cartItems.filter(it => (it.category || '').toLowerCase().includes('cake') || (it.name || '').toLowerCase().includes('cake'));
+    } else if (targetPhrase === 'candle' || targetPhrase === 'candles' || targetPhrase === 'birthday candles') {
+      matchedItems = cartItems.filter(it => (it.name || '').toLowerCase().includes('candle'));
+    } else if (targetPhrase === 'balloon' || targetPhrase === 'balloons' || targetPhrase === 'balloon kit' || targetPhrase === 'balloon decoration kit') {
+      matchedItems = cartItems.filter(it => (it.name || '').toLowerCase().includes('balloon'));
+    } else if (targetPhrase === 'banner' || targetPhrase === 'birthday banner') {
+      matchedItems = cartItems.filter(it => (it.name || '').toLowerCase().includes('banner'));
+    } else if (targetPhrase === 'shoe' || targetPhrase === 'shoes' || targetPhrase === 'footwear' || targetPhrase === 'running shoes' || targetPhrase === 'sneakers') {
+      matchedItems = cartItems.filter(it => (it.category || '').toLowerCase().includes('footwear') || (it.name || '').toLowerCase().includes('shoe') || (it.name || '').toLowerCase().includes('sneaker'));
+    } else if (targetPhrase === 'sock' || targetPhrase === 'socks' || targetPhrase === 'sports socks') {
+      matchedItems = cartItems.filter(it => (it.name || '').toLowerCase().includes('sock'));
+    } else if (targetPhrase === 'cleaning kit' || targetPhrase === 'shoe cleaning kit') {
+      matchedItems = cartItems.filter(it => (it.name || '').toLowerCase().includes('cleaning'));
+    } else if (targetPhrase === 'laptop' || targetPhrase === 'laptops') {
+      matchedItems = cartItems.filter(it => (it.category || '').toLowerCase().includes('laptop') || (it.name || '').toLowerCase().includes('laptop'));
+    } else if (targetPhrase === 'headphones' || targetPhrase === 'headphone') {
+      matchedItems = cartItems.filter(it => (it.name || '').toLowerCase().includes('headphone'));
+    } else if (targetPhrase === 'mouse') {
+      matchedItems = cartItems.filter(it => (it.name || '').toLowerCase().includes('mouse'));
+    } else if (targetPhrase === 'backpack' || targetPhrase === 'bag') {
+      matchedItems = cartItems.filter(it => (it.name || '').toLowerCase().includes('backpack'));
+    } else {
+      matchedItems = cartItems.filter(it => (it.name || '').toLowerCase().includes(targetPhrase) || (it.category || '').toLowerCase().includes(targetPhrase));
+    }
+
+    if (matchedItems.length > 0) {
+      for (const it of matchedItems) {
+        AgentTools.removeFromCart(customerId, it.id);
+      }
+      const updatedCart = AgentTools.getCart(customerId);
+      const removedNames = matchedItems.map(m => `**${m.name}**`).join(', ');
+      logAudit('Customer', customerId, 'Remove Item via AI', `Removed ${removedNames} from cart on customer request "${userMessage}"`, { removed: matchedItems, modality: currentModality });
+
+      let aiMsg = `Removed ${removedNames} from your cart.\n\n`;
+      if (updatedCart.items.length === 0) {
+        aiMsg += 'Your cart is now empty.';
+      } else {
+        const lines = updatedCart.items.map(it => `• **${it.name}** — ₹${it.price.toLocaleString('en-IN')}${it.quantity > 1 ? ` (Qty: ${it.quantity})` : ''}`);
+        aiMsg += `Your updated cart (${updatedCart.total_items} item${updatedCart.total_items > 1 ? 's' : ''}):\n${lines.join('\n')}\n\n**Total Payable: ₹${updatedCart.total_amount.toLocaleString('en-IN')}**`;
+      }
+
+      return res.json({
+        intent: `Remove ${targetPhrase}`,
+        ai_message: aiMsg,
+        message: aiMsg,
+        cart: updatedCart,
+        cart_items: updatedCart.items,
+        primary_product: null,
+        products: [],
+        compared_products: [],
+        bundle: null,
+        tool_calls_executed: ['remove_from_cart'],
+        action_type: 'CART_UPDATED',
+        cart_updated: true,
+        modality: currentModality
+      });
+    } else {
+      const aiMsg = `Notice: Could not find "${targetPhrase}" in your cart.\n\n${formatCartSummary(currentCart)}`;
+      return res.json({
+        intent: 'Remove Notice',
+        ai_message: aiMsg,
+        message: aiMsg,
+        cart: currentCart,
+        cart_items: currentCart.items,
+        primary_product: null,
+        products: [],
+        compared_products: [],
+        bundle: null,
+        tool_calls_executed: [],
+        action_type: 'NOTICE',
+        modality: currentModality
+      });
+    }
+  }
+
+  // =========================================================================
+  // PERSISTENT CART RULE 3: "JUST [PRODUCT]" / "ONLY [PRODUCT]"
+  // e.g. "just vanilla cake", "only vanilla cake", "just cake", "just shoes"
+  // =========================================================================
+  const isJustCmd = /^(?:just|only)\s+(?:the\s+|a\s+|an\s+)?([a-z0-9\s]+?)(?:\s+alone|\s+in\s+cart|\s+please)?$/i.test(msgLower);
+  if (isJustCmd && !msgLower.includes('search') && !msgLower.includes('look')) {
+    const justTarget = msgLower
+      .replace(/^(?:just|only)\s+/i, '')
+      .replace(/^(?:the|a|an)\s+/i, '')
+      .replace(/\s+(?:alone|in\s+cart|please)$/i, '')
+      .trim();
+
+    const targetProd = findProductInCatalog(justTarget) || session.last_selected_product || session.last_search_results?.[0];
+
+    if (targetProd) {
+      AgentTools.clearCart(customerId);
+      AgentTools.add_to_cart(customerId, targetProd.id, 1);
+      const updatedCart = AgentTools.getCart(customerId);
+
+      logAudit('Customer', customerId, 'Just Product in Cart', `Cart updated to contain only ${targetProd.name}`, { product: targetProd, modality: currentModality });
+
+      const aiMsg = `Updated your cart to contain ONLY **${targetProd.name}** (₹${targetProd.price.toLocaleString('en-IN')}).\n\n• **${targetProd.name}** — ₹${targetProd.price.toLocaleString('en-IN')}\n\n**Total Payable: ₹${updatedCart.total_amount.toLocaleString('en-IN')}**`;
+
+      return res.json({
+        intent: `Just ${targetProd.name}`,
+        ai_message: aiMsg,
+        message: aiMsg,
+        cart: updatedCart,
+        cart_items: updatedCart.items,
+        primary_product: targetProd,
+        products: [targetProd],
+        compared_products: [targetProd],
+        bundle: null,
+        tool_calls_executed: ['clear_cart', 'add_to_cart'],
+        action_type: 'CART_UPDATED',
+        cart_updated: true,
+        modality: currentModality
+      });
+    }
+  }
+
+  // =========================================================================
+  // PERSISTENT CART RULE 4: SPECIFIC PRODUCT NEED / REPLACEMENT ("I need vanilla cake", "replace with vanilla cake", "vanilla cake instead")
+  // =========================================================================
+  const isNeedOrReplaceCmd = (
+    /^(?:i\s+need|i\s+want|change\s+to|replace\s+with|switch\s+to|give\s+me)\s+(?:a\s+|an\s+|the\s+)?([a-z0-9\s]+?)(?:\s+instead|\s+to\s+cart|\s+please)?$/i.test(msgLower) ||
+    msgLower.endsWith('instead') ||
+    msgLower === 'vanilla cake' ||
+    msgLower === 'chocolate cake' ||
+    msgLower === 'mango cake' ||
+    msgLower === 'casual sneakers' ||
+    msgLower === 'running shoes' ||
+    msgLower === 'formal leather shoes'
+  );
+
+  if (isNeedOrReplaceCmd && !intent.isAddBundleAction) {
+    let cleanNeedTarget = msgLower
+      .replace(/^(?:i\s+need|i\s+want|change\s+to|replace\s+with|switch\s+to|give\s+me)\s+/i, '')
+      .replace(/^(?:a|an|the)\s+/i, '')
+      .replace(/\s+(?:instead|to\s+cart|please)$/i, '')
+      .trim();
+
+    const targetProd = findProductInCatalog(cleanNeedTarget);
+
+    if (targetProd) {
+      // Check if cart already has an item of the SAME category (e.g. Cakes, Footwear, Laptops)
+      const sameCategoryItems = cartItems.filter(it => (it.category || '').toLowerCase() === (targetProd.category || '').toLowerCase() && it.product_id !== targetProd.id);
+
+      let replacedName = null;
+      if (sameCategoryItems.length > 0) {
+        // Swap: Remove existing same-category item and add new requested item
+        for (const existing of sameCategoryItems) {
+          AgentTools.removeFromCart(customerId, existing.id);
+          replacedName = existing.name;
+        }
+      }
+
+      // Check if targetProd is already in cart
+      const alreadyInCart = cartItems.some(it => it.product_id === targetProd.id);
+      if (!alreadyInCart) {
+        AgentTools.add_to_cart(customerId, targetProd.id, 1);
+      }
+
+      const updatedCart = AgentTools.getCart(customerId);
+      let aiMsg = '';
+      if (replacedName) {
+        aiMsg = `Replaced **${replacedName}** with **${targetProd.name}** (₹${targetProd.price.toLocaleString('en-IN')}) in your cart.\n\n${formatCartSummary(updatedCart)}`;
+      } else if (alreadyInCart) {
+        aiMsg = `**${targetProd.name}** is already in your cart.\n\n${formatCartSummary(updatedCart)}`;
+      } else {
+        aiMsg = `Added **${targetProd.name}** (₹${targetProd.price.toLocaleString('en-IN')}) to your cart.\n\n${formatCartSummary(updatedCart)}`;
+      }
+
+      logAudit('Customer', customerId, 'Update Cart via AI', `Cart updated with ${targetProd.name} on command "${userMessage}"`, { product: targetProd, replaced: replacedName, modality: currentModality });
+
+      return res.json({
+        intent: `Select ${targetProd.name}`,
+        ai_message: aiMsg,
+        message: aiMsg,
+        cart: updatedCart,
+        cart_items: updatedCart.items,
+        primary_product: targetProd,
+        products: [targetProd],
+        compared_products: [targetProd],
+        bundle: null,
+        tool_calls_executed: replacedName ? ['remove_from_cart', 'add_to_cart'] : ['add_to_cart'],
+        action_type: 'CART_UPDATED',
+        cart_updated: true,
+        modality: currentModality
+      });
+    }
+  }
+
+  // =========================================================================
+  // PERSISTENT CART RULE 5: EXPLICIT ADD ITEM ("add candles", "add balloon", "add socks", "add cleaning kit")
+  // =========================================================================
+  const isExplicitAddCmd = /^add\s+(?:the\s+|a\s+|an\s+)?([a-z0-9\s]+?)(?:\s+to\s+cart|\s+please)?$/i.test(msgLower);
+  if (isExplicitAddCmd && !intent.isAddBundleAction && !intent.isAddMultipleItems && intent.targetPosition === null) {
+    const addTarget = msgLower
+      .replace(/^add\s+/i, '')
+      .replace(/^(?:the|a|an)\s+/i, '')
+      .replace(/\s+(?:to\s+cart|please)$/i, '')
+      .trim();
+
+    const targetProd = findProductInCatalog(addTarget);
+    if (targetProd) {
+      const alreadyInCart = cartItems.some(it => it.product_id === targetProd.id);
+      if (alreadyInCart) {
+        const aiMsg = `**${targetProd.name}** is already in your cart.\n\n${formatCartSummary(currentCart)}`;
+        return res.json({
+          intent: `Add ${targetProd.name}`,
+          ai_message: aiMsg,
+          message: aiMsg,
+          cart: currentCart,
+          cart_items: currentCart.items,
+          primary_product: targetProd,
+          products: [targetProd],
+          compared_products: [targetProd],
+          bundle: null,
+          tool_calls_executed: [],
+          action_type: 'NOTICE',
+          modality: currentModality
+        });
+      } else {
+        AgentTools.add_to_cart(customerId, targetProd.id, 1);
+        const updatedCart = AgentTools.getCart(customerId);
+        logAudit('Customer', customerId, 'Add Item via AI', `Added ${targetProd.name} to cart`, { product: targetProd, modality: currentModality });
+
+        const aiMsg = `Added **${targetProd.name}** (₹${targetProd.price.toLocaleString('en-IN')}) to your cart.\n\n${formatCartSummary(updatedCart)}`;
+        return res.json({
+          intent: `Add ${targetProd.name}`,
+          ai_message: aiMsg,
+          message: aiMsg,
+          cart: updatedCart,
+          cart_items: updatedCart.items,
+          primary_product: targetProd,
+          products: [targetProd],
+          compared_products: [targetProd],
+          bundle: null,
+          tool_calls_executed: ['add_to_cart'],
+          action_type: 'CART_UPDATED',
+          cart_updated: true,
+          modality: currentModality
+        });
+      }
+    }
+  }
 
   // 1. Action: Add Complete Bundle
   if (intent.isAddBundleAction) {
