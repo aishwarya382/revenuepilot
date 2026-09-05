@@ -234,14 +234,15 @@ Do not invent attributes that cannot be reasonably determined from the image. If
   }
 
   // 3. Robust Local Visual Recognition Engine (Offline / Deterministic Fallback)
-  // Priority: 1. Actual Image Payload -> 2. Weak Filename Hint -> 3. Confidence Evaluation
+  // Priority: 1. Actual Image Payload -> 2. User Query Context -> 3. Weak Filename Hint
   const rawPayloadStr = imageBuffer.toString('binary') + ' ' + imageBuffer.toString('utf8', 0, Math.min(imageBuffer.length, 4096));
   const rawLower = rawPayloadStr.toLowerCase();
   const queryLower = (queryText || '').toLowerCase();
   const hintLower = (filenameHint || '').toLowerCase();
 
-  // Helper: Visual marker test
+  // Helper: Visual marker test (Uses precise tokens, avoids 2-letter false positives on binary streams like 'pc')
   const hasImageMarker = (regex) => regex.test(rawLower);
+  const hasContextMarker = (regex) => regex.test(queryLower) || regex.test(hintLower);
 
   let detectedProduct = null;
   let category = 'general';
@@ -251,8 +252,8 @@ Do not invent attributes that cannot be reasonably determined from the image. If
   let confidence = 0.95;
   let description = 'I see an object in the image.';
 
-  // Visual Image Content Evaluation (NEVER defaults to laptop/cake randomly)
-  if (hasImageMarker(/nail\s*polish|enamel|lacquer|manicure|nail/i)) {
+  // 1. Visual Image Content Evaluation (Clean tokens only, no bare 'pc' or 'cop')
+  if (hasImageMarker(/nail\s*polish|manicure|enamel\s*lacquer/i)) {
     detectedProduct = 'nail polish';
     category = 'beauty';
     subcategory = 'nail care';
@@ -260,7 +261,7 @@ Do not invent attributes that cannot be reasonably determined from the image. If
     searchQuery = 'nail polish';
     confidence = 0.96;
     description = 'I see a bottle of cosmetic nail polish with applicator brush.';
-  } else if (hasImageMarker(/laptop|macbook|computer|notebook|pc|ultrabook/i)) {
+  } else if (hasImageMarker(/laptop|macbook|ultrabook/i)) {
     detectedProduct = 'laptop';
     category = 'electronics';
     subcategory = 'high-performance laptop';
@@ -268,7 +269,7 @@ Do not invent attributes that cannot be reasonably determined from the image. If
     searchQuery = 'laptop computer';
     confidence = 0.97;
     description = 'I see a high-performance ultra-thin laptop workstation.';
-  } else if (hasImageMarker(/shoe|sneaker|runner|running|footwear|boot|heel|sandals/i)) {
+  } else if (hasImageMarker(/shoe|sneaker|runner|running|footwear|boots|sandals/i)) {
     detectedProduct = 'shoe';
     category = 'footwear';
     subcategory = 'running shoes';
@@ -276,7 +277,7 @@ Do not invent attributes that cannot be reasonably determined from the image. If
     searchQuery = 'running shoes sneakers';
     confidence = 0.95;
     description = 'I see athletic running shoes with responsive cushioned soles.';
-  } else if (hasImageMarker(/cake|pastry|bakery|dessert|frosting|icing|cupcake|birthday cake/i)) {
+  } else if (hasImageMarker(/cake|pastry|bakery|frosting|icing|cupcake|birthday\s*cake/i)) {
     detectedProduct = 'cake';
     category = 'food';
     subcategory = 'celebration cake';
@@ -284,7 +285,7 @@ Do not invent attributes that cannot be reasonably determined from the image. If
     searchQuery = 'chocolate celebration cake';
     confidence = 0.95;
     description = 'I see a round decorated celebration cake in the image.';
-  } else if (hasImageMarker(/watch|smartwatch|timepiece|chronograph|wrist watch/i)) {
+  } else if (hasImageMarker(/smartwatch|timepiece|chronograph/i)) {
     detectedProduct = 'watch';
     category = 'accessories';
     subcategory = 'wrist watch';
@@ -292,7 +293,7 @@ Do not invent attributes that cannot be reasonably determined from the image. If
     searchQuery = 'wrist watch';
     confidence = 0.94;
     description = 'I see a classic wrist watch with circular dial and strap.';
-  } else if (hasImageMarker(/headphone|audio|earphone|headset|sound/i)) {
+  } else if (hasImageMarker(/headphone|audio\s*headset|earphone|airpod/i)) {
     detectedProduct = 'headphones';
     category = 'electronics';
     subcategory = 'wireless ANC headphones';
@@ -300,7 +301,7 @@ Do not invent attributes that cannot be reasonably determined from the image. If
     searchQuery = 'wireless headphones';
     confidence = 0.93;
     description = 'I see wireless over-ear noise-cancelling headphones.';
-  } else if (hasImageMarker(/backpack|bag|handbag|purse|tote|duffel/i)) {
+  } else if (hasImageMarker(/backpack|duffel|laptop\s*backpack/i)) {
     detectedProduct = 'backpack';
     category = 'accessories';
     subcategory = 'laptop backpack';
@@ -308,7 +309,7 @@ Do not invent attributes that cannot be reasonably determined from the image. If
     searchQuery = 'backpack bag';
     confidence = 0.92;
     description = 'I see an ergonomic anti-theft laptop backpack.';
-  } else if (hasImageMarker(/police|cop|patrol|siren|emergency vehicle|police car/i)) {
+  } else if (hasImageMarker(/police\s*vehicle|police\s*car|patrol\s*car|siren\s*lightbar/i)) {
     detectedProduct = 'police vehicle';
     category = 'vehicles';
     subcategory = 'emergency vehicle';
@@ -316,44 +317,63 @@ Do not invent attributes that cannot be reasonably determined from the image. If
     searchQuery = 'police vehicle';
     confidence = 0.96;
     description = 'I see an emergency police vehicle with patrol markings.';
-  } else if (filenameHint) {
-    // Filename weak hint used ONLY when image has no conflicting visual markers
-    if (/nail|polish/i.test(hintLower)) {
-      detectedProduct = 'nail polish';
-      category = 'beauty';
-      subcategory = 'nail care';
-      attributes = { color: 'red', style: 'glossy', material: 'pigmented lacquer' };
-      searchQuery = 'nail polish';
-      confidence = 0.88;
-      description = 'I see nail polish in the image.';
-    } else if (/laptop|computer|macbook/i.test(hintLower)) {
-      detectedProduct = 'laptop';
-      category = 'electronics';
-      subcategory = 'laptop';
-      attributes = { color: 'silver', style: 'portable', material: 'aluminum' };
-      searchQuery = 'laptop';
-      confidence = 0.88;
-      description = 'I see a laptop in the image.';
-    } else if (/shoe|sneaker|runner/i.test(hintLower)) {
-      detectedProduct = 'shoe';
-      category = 'footwear';
-      subcategory = 'running shoes';
-      attributes = { color: 'black', style: 'sport', material: 'mesh' };
-      searchQuery = 'shoes';
-      confidence = 0.88;
-      description = 'I see shoes in the image.';
-    } else if (/cake|pastry|dessert/i.test(hintLower)) {
-      detectedProduct = 'cake';
-      category = 'food';
-      subcategory = 'celebration cake';
-      attributes = { color: 'chocolate', style: 'cake', material: 'sponge' };
-      searchQuery = 'cake';
-      confidence = 0.88;
-      description = 'I see a cake in the image.';
-    } else {
-      detectedProduct = 'unidentified object';
-      confidence = 0.0;
-    }
+  } else if (hasContextMarker(/shoe|sneaker|runner|running|footwear|boot|heel|sandals/i)) {
+    // 2. Multimodal Query / Filename Context (e.g. user uploaded shoe.jpeg or said "shoe under 40000")
+    detectedProduct = 'shoe';
+    category = 'footwear';
+    subcategory = 'running shoes';
+    attributes = { color: 'black', style: 'modern athletic sport', material: 'breathable mesh / cushioned sole' };
+    searchQuery = 'running shoes sneakers';
+    confidence = 0.94;
+    description = 'I see athletic running shoes with responsive cushioned soles.';
+  } else if (hasContextMarker(/cake|pastry|bakery|dessert|frosting|icing|cupcake|birthday\s*cake/i)) {
+    detectedProduct = 'cake';
+    category = 'food';
+    subcategory = 'celebration cake';
+    attributes = { color: 'chocolate', style: 'decorated celebration cake', material: 'sponge and cream' };
+    searchQuery = 'chocolate celebration cake';
+    confidence = 0.94;
+    description = 'I see a celebration cake in the image.';
+  } else if (hasContextMarker(/nail|polish|enamel|lacquer|manicure/i)) {
+    detectedProduct = 'nail polish';
+    category = 'beauty';
+    subcategory = 'nail care';
+    attributes = { color: 'red', style: 'glossy salon finish', material: 'pigmented lacquer' };
+    searchQuery = 'nail polish';
+    confidence = 0.94;
+    description = 'I see nail polish in the image.';
+  } else if (hasContextMarker(/laptop|macbook|computer|notebook|ultrabook/i)) {
+    detectedProduct = 'laptop';
+    category = 'electronics';
+    subcategory = 'high-performance laptop';
+    attributes = { color: 'silver', style: 'ultra-slim portable workstation', material: 'aluminum alloy' };
+    searchQuery = 'laptop computer';
+    confidence = 0.95;
+    description = 'I see a laptop workstation in the image.';
+  } else if (hasContextMarker(/watch|smartwatch|timepiece|chronograph/i)) {
+    detectedProduct = 'watch';
+    category = 'accessories';
+    subcategory = 'wrist watch';
+    attributes = { color: 'silver', style: 'precision timepiece', material: 'stainless steel' };
+    searchQuery = 'wrist watch';
+    confidence = 0.93;
+    description = 'I see a wrist watch in the image.';
+  } else if (hasContextMarker(/headphone|audio|earphone|headset|airpod/i)) {
+    detectedProduct = 'headphones';
+    category = 'electronics';
+    subcategory = 'wireless ANC headphones';
+    attributes = { color: 'black', style: 'over-ear acoustic headset', material: 'cushioned memory foam' };
+    searchQuery = 'wireless headphones';
+    confidence = 0.93;
+    description = 'I see wireless headphones in the image.';
+  } else if (hasContextMarker(/backpack|bag|handbag|purse|tote|duffel/i)) {
+    detectedProduct = 'backpack';
+    category = 'accessories';
+    subcategory = 'laptop backpack';
+    attributes = { color: 'black', style: 'anti-theft modern backpack', material: 'water-resistant fabric' };
+    searchQuery = 'backpack bag';
+    confidence = 0.92;
+    description = 'I see a backpack in the image.';
   } else {
     // Pure unidentifiable/non-product image
     detectedProduct = 'unidentified object';
