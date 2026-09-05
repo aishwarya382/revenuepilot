@@ -172,10 +172,57 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
     setAudioLevel(0);
   };
 
+  // Smart Spoken Speech Normalizer (converts spoken numbers, "one thousand rupees" -> "₹1,000", etc.)
+  const normalizeSpokenText = (text) => {
+    if (!text) return '';
+    let cleaned = text;
+
+    const numberWords = {
+      'zero': 0, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+      'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10,
+      'eleven': 11, 'twelve': 12, 'thirteen': 13, 'fourteen': 14, 'fifteen': 15,
+      'sixteen': 16, 'seventeen': 17, 'eighteen': 18, 'nineteen': 19, 'twenty': 20,
+      'thirty': 30, 'forty': 40, 'fifty': 50, 'sixty': 60, 'seventy': 70,
+      'eighty': 80, 'ninety': 90, 'hundred': 100, 'thousand': 1000, 'lakh': 100000
+    };
+
+    // Replace "one thousand rupees" -> "₹1,000"
+    cleaned = cleaned.replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+thousand\s*(rupees|rupee|rs\.?|inr)?\b/gi, (match, p1) => {
+      const num = (numberWords[p1.toLowerCase()] || 1) * 1000;
+      return `₹${num.toLocaleString('en-IN')}`;
+    });
+
+    // Replace "five hundred rupees" -> "₹500"
+    cleaned = cleaned.replace(/\b(one|two|three|four|five|six|seven|eight|nine)\s+hundred\s*(rupees|rupee|rs\.?|inr)?\b/gi, (match, p1) => {
+      const num = (numberWords[p1.toLowerCase()] || 1) * 100;
+      return `₹${num.toLocaleString('en-IN')}`;
+    });
+
+    // Replace numeric "1000 rupees" -> "₹1,000"
+    cleaned = cleaned.replace(/\b(\d+)\s*(rupees|rupee|rs\.?|inr)\b/gi, (match, p1) => {
+      const n = parseInt(p1, 10);
+      return isNaN(n) ? match : `₹${n.toLocaleString('en-IN')}`;
+    });
+
+    // Replace lone "one thousand" -> "1000"
+    cleaned = cleaned.replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+thousand\b/gi, (match, p1) => {
+      const num = (numberWords[p1.toLowerCase()] || 1) * 1000;
+      return `${num}`;
+    });
+
+    // Replace lone "five hundred" -> "500"
+    cleaned = cleaned.replace(/\b(one|two|three|four|five|six|seven|eight|nine)\s+hundred\b/gi, (match, p1) => {
+      const num = (numberWords[p1.toLowerCase()] || 1) * 100;
+      return `${num}`;
+    });
+
+    return cleaned;
+  };
+
   // ==========================================
   // 1. VOICE SHOPPING (WEB SPEECH API - CHATGPT STYLE)
   // ==========================================
-  const startListening = async () => {
+  const startListening = () => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
@@ -184,103 +231,78 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       return;
     }
 
-    // Start Web Audio API Volume Level Analyser
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaStreamRef.current = stream;
-
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        if (AudioContext) {
-          const audioCtx = new AudioContext();
-          audioContextRef.current = audioCtx;
-          const source = audioCtx.createMediaStreamSource(stream);
-          const analyser = audioCtx.createAnalyser();
-          analyser.fftSize = 256;
-          source.connect(analyser);
-
-          const bufferLength = analyser.frequencyBinCount;
-          const dataArray = new Uint8Array(bufferLength);
-
-          const updateVolume = () => {
-            if (!analyser) return;
-            analyser.getByteFrequencyData(dataArray);
-            let sum = 0;
-            for (let i = 0; i < bufferLength; i++) {
-              sum += dataArray[i];
-            }
-            const avg = sum / bufferLength;
-            setAudioLevel(Math.min(100, Math.round((avg / 128) * 100)));
-            animationFrameRef.current = requestAnimationFrame(updateVolume);
-          };
-          updateVolume();
-        }
-      } catch (micErr) {
-        console.warn('Microphone permission request:', micErr);
-        if (micErr.name === 'NotAllowedError' || micErr.name === 'PermissionDeniedError') {
-          showNotification('Microphone permission is required for voice input.', 'error');
-          setVoiceStatus('ERROR');
-          return;
-        }
-      }
-    }
-
     try {
       if (recognitionRef.current) {
         try { recognitionRef.current.abort(); } catch { /* ignore */ }
       }
 
       const recognition = new SpeechRecognition();
+      // continuous = false allows the engine to naturally conclude when user stops speaking
       recognition.continuous = false;
       recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
       recognition.lang = speechLang || 'en-IN';
       hasSpokenTextRef.current = false;
 
       recognition.onstart = () => {
         setIsListening(true);
         setVoiceStatus('RECORDING');
+        setAudioLevel(45);
+      };
+
+      recognition.onspeechstart = () => {
+        setAudioLevel(85);
+      };
+
+      recognition.onspeechend = () => {
+        setAudioLevel(15);
       };
 
       recognition.onresult = (event) => {
-        let interimTranscript = '';
         let finalTranscript = '';
+        let interimTranscript = '';
 
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            finalTranscript += transcript;
-          } else {
-            interimTranscript += transcript;
+        // Iterate through all results to retain cumulative sentences
+        for (let i = 0; i < event.results.length; i++) {
+          const res = event.results[i];
+          if (res && res[0]) {
+            if (res.isFinal) {
+              finalTranscript += res[0].transcript + ' ';
+            } else {
+              interimTranscript += res[0].transcript;
+            }
           }
         }
 
-        const currentText = (finalTranscript || interimTranscript).trim();
-        if (currentText) {
+        const rawText = (finalTranscript + interimTranscript).trim();
+        if (rawText) {
           hasSpokenTextRef.current = true;
-          // Live progressive update directly inside the chat input box
-          setInputMessage(currentText);
+          const normalized = normalizeSpokenText(rawText);
+          setInputMessage(normalized);
         }
       };
 
       recognition.onerror = (event) => {
-        console.warn('Speech recognition event error:', event.error);
+        console.warn('Speech recognition error:', event.error);
         setIsListening(false);
         setVoiceStatus('ERROR');
+        setAudioLevel(0);
 
         if (event.error === 'not-allowed' || event.error === 'permission-denied') {
-          showNotification('Microphone permission is required for voice input.', 'error');
+          showNotification('Microphone permission is required for voice input. Click lock 🔒 in address bar to allow.', 'error');
         } else if (event.error === 'no-speech') {
-          showNotification("Sorry, I couldn't detect any speech. Please try again.", 'error');
+          showNotification("Sorry, I couldn't detect any speech. Please try speaking again.", 'error');
+        } else if (event.error === 'audio-capture') {
+          showNotification('No microphone was found or microphone is busy.', 'error');
         } else if (event.error !== 'aborted') {
           showNotification("Couldn't understand the voice input. Please try again.", 'error');
         }
-        stopListeningMedia();
       };
 
       recognition.onend = () => {
         setIsListening(false);
         setVoiceStatus('IDLE');
-        stopListeningMedia();
+        setAudioLevel(0);
         if (inputRef.current) {
           inputRef.current.focus();
         }
@@ -292,8 +314,8 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       console.error('Failed to start voice recognition:', err);
       setIsListening(false);
       setVoiceStatus('ERROR');
-      showNotification('Failed to initialize microphone.', 'error');
-      stopListeningMedia();
+      setAudioLevel(0);
+      showNotification('Failed to initialize microphone. Please check browser permissions.', 'error');
     }
   };
 
@@ -305,9 +327,9 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
         // ignore stop error
       }
     }
-    stopListeningMedia();
     setIsListening(false);
     setVoiceStatus('IDLE');
+    setAudioLevel(0);
     if (inputRef.current) {
       inputRef.current.focus();
     }
