@@ -88,24 +88,22 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
   // Multimodal State: Image Attachment
   const [attachedImage, setAttachedImage] = useState(null); // { file, dataUrl, name, size }
 
-  // Multimodal State: Voice Recognition
+  // Multimodal State: Voice Recognition (ChatGPT-Style In-Place Dictation)
   const [isListening, setIsListening] = useState(false);
-  const [showVoiceModal, setShowVoiceModal] = useState(false);
-  const [transcriptPreview, setTranscriptPreview] = useState('');
+  const [voiceStatus, setVoiceStatus] = useState('IDLE'); // 'IDLE' | 'RECORDING' | 'PROCESSING' | 'ERROR'
+  const [speechLang, setSpeechLang] = useState('en-IN'); // Configurable: 'en-IN', 'hi-IN', 'ta-IN', 'en-US'
   const [audioLevel, setAudioLevel] = useState(0);
   const recognitionRef = useRef(null);
   const mediaStreamRef = useRef(null);
   const audioContextRef = useRef(null);
   const animationFrameRef = useRef(null);
+  const hasSpokenTextRef = useRef(false);
 
   // System Notification
   const [notification, setNotification] = useState(null);
 
   // Selected Product for Details Modal
   const [detailProduct, setDetailProduct] = useState(null);
-
-  // Checkout Modal State
-  const [checkoutOrder, setCheckoutOrder] = useState(null);
 
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -154,113 +152,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
     setTimeout(() => setNotification(null), 4500);
   };
 
-  // ==========================================
-  // 1. VOICE SHOPPING (WEB SPEECH API + AUDIO ANALYSER)
-  // ==========================================
-  const startListening = async () => {
-    setShowVoiceModal(true);
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    // Start Web Audio API Volume Analyser
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaStreamRef.current = stream;
-
-        try {
-          const AudioContext = window.AudioContext || window.webkitAudioContext;
-          if (AudioContext) {
-            const audioCtx = new AudioContext();
-            audioContextRef.current = audioCtx;
-            const source = audioCtx.createMediaStreamSource(stream);
-            const analyser = audioCtx.createAnalyser();
-            analyser.fftSize = 256;
-            source.connect(analyser);
-
-            const bufferLength = analyser.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
-
-            const updateVolume = () => {
-              if (!analyser) return;
-              analyser.getByteFrequencyData(dataArray);
-              let sum = 0;
-              for (let i = 0; i < bufferLength; i++) {
-                sum += dataArray[i];
-              }
-              const avg = sum / bufferLength;
-              setAudioLevel(Math.min(100, Math.round((avg / 128) * 100)));
-              animationFrameRef.current = requestAnimationFrame(updateVolume);
-            };
-            updateVolume();
-          }
-        } catch (ctxErr) {
-          console.warn('AudioContext volume meter notice:', ctxErr);
-        }
-      } catch (micErr) {
-        console.warn('Microphone permission request:', micErr);
-      }
-    }
-
-    if (!SpeechRecognition) {
-      showNotification('Browser SpeechRecognition is not supported in this browser. You can select instant spoken voice queries below.', 'error');
-      return;
-    }
-
-    try {
-      if (recognitionRef.current) {
-        try { recognitionRef.current.abort(); } catch { /* ignore */ }
-      }
-
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = navigator.language || 'en-US';
-
-      recognition.onstart = () => {
-        setIsListening(true);
-      };
-
-      recognition.onresult = (event) => {
-        let currentTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          currentTranscript += event.results[i][0].transcript;
-        }
-
-        if (currentTranscript.trim()) {
-          setTranscriptPreview(currentTranscript);
-          setInputMessage(currentTranscript);
-        }
-      };
-
-      recognition.onerror = (event) => {
-        console.warn('Speech recognition event error:', event.error);
-        if (event.error === 'not-allowed' || event.error === 'permission-denied') {
-          showNotification('Microphone access was denied. Please allow microphone permissions in browser settings.', 'error');
-        } else if (event.error === 'network') {
-          showNotification('Voice recognition network notice. You can click any spoken query below.', 'error');
-        }
-      };
-
-      recognition.onend = () => {
-        setIsListening(false);
-      };
-
-      recognitionRef.current = recognition;
-      recognition.start();
-    } catch (err) {
-      console.error('Failed to start voice recognition:', err);
-      setIsListening(false);
-    }
-  };
-
-  const stopListening = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {
-        // ignore stop error
-      }
-    }
+  const stopListeningMedia = () => {
     if (mediaStreamRef.current) {
       try {
         mediaStreamRef.current.getTracks().forEach(track => track.stop());
@@ -278,7 +170,147 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       animationFrameRef.current = null;
     }
     setAudioLevel(0);
+  };
+
+  // ==========================================
+  // 1. VOICE SHOPPING (WEB SPEECH API - CHATGPT STYLE)
+  // ==========================================
+  const startListening = async () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      showNotification("Voice input isn't supported in this browser. You can type your request instead.", 'error');
+      setVoiceStatus('UNSUPPORTED');
+      return;
+    }
+
+    // Start Web Audio API Volume Level Analyser
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaStreamRef.current = stream;
+
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) {
+          const audioCtx = new AudioContext();
+          audioContextRef.current = audioCtx;
+          const source = audioCtx.createMediaStreamSource(stream);
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 256;
+          source.connect(analyser);
+
+          const bufferLength = analyser.frequencyBinCount;
+          const dataArray = new Uint8Array(bufferLength);
+
+          const updateVolume = () => {
+            if (!analyser) return;
+            analyser.getByteFrequencyData(dataArray);
+            let sum = 0;
+            for (let i = 0; i < bufferLength; i++) {
+              sum += dataArray[i];
+            }
+            const avg = sum / bufferLength;
+            setAudioLevel(Math.min(100, Math.round((avg / 128) * 100)));
+            animationFrameRef.current = requestAnimationFrame(updateVolume);
+          };
+          updateVolume();
+        }
+      } catch (micErr) {
+        console.warn('Microphone permission request:', micErr);
+        if (micErr.name === 'NotAllowedError' || micErr.name === 'PermissionDeniedError') {
+          showNotification('Microphone permission is required for voice input.', 'error');
+          setVoiceStatus('ERROR');
+          return;
+        }
+      }
+    }
+
+    try {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch { /* ignore */ }
+      }
+
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = speechLang || 'en-IN';
+      hasSpokenTextRef.current = false;
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        setVoiceStatus('RECORDING');
+      };
+
+      recognition.onresult = (event) => {
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript;
+          } else {
+            interimTranscript += transcript;
+          }
+        }
+
+        const currentText = (finalTranscript || interimTranscript).trim();
+        if (currentText) {
+          hasSpokenTextRef.current = true;
+          // Live progressive update directly inside the chat input box
+          setInputMessage(currentText);
+        }
+      };
+
+      recognition.onerror = (event) => {
+        console.warn('Speech recognition event error:', event.error);
+        setIsListening(false);
+        setVoiceStatus('ERROR');
+
+        if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+          showNotification('Microphone permission is required for voice input.', 'error');
+        } else if (event.error === 'no-speech') {
+          showNotification("Sorry, I couldn't detect any speech. Please try again.", 'error');
+        } else if (event.error !== 'aborted') {
+          showNotification("Couldn't understand the voice input. Please try again.", 'error');
+        }
+        stopListeningMedia();
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        setVoiceStatus('IDLE');
+        stopListeningMedia();
+        if (inputRef.current) {
+          inputRef.current.focus();
+        }
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (err) {
+      console.error('Failed to start voice recognition:', err);
+      setIsListening(false);
+      setVoiceStatus('ERROR');
+      showNotification('Failed to initialize microphone.', 'error');
+      stopListeningMedia();
+    }
+  };
+
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore stop error
+      }
+    }
+    stopListeningMedia();
     setIsListening(false);
+    setVoiceStatus('IDLE');
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
   };
 
   // ==========================================
@@ -581,7 +613,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
               </div>
             )}
 
-            {/* Live Listening Indicator & Waveform Bar */}
+            {/* In-Place Live Listening Indicator */}
             {isListening && (
               <div style={{
                 display: 'flex',
@@ -589,65 +621,49 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
                 justifyContent: 'space-between',
                 background: '#fef2f2',
                 border: '1.5px solid #fecaca',
-                padding: '10px 14px',
+                padding: '8px 14px',
                 borderRadius: '14px',
                 marginBottom: '10px',
                 animation: 'pulse 1.5s infinite'
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <div style={{
-                    width: '12px',
-                    height: '12px',
-                    borderRadius: '50%',
-                    background: '#dc2626',
-                    boxShadow: '0 0 10px rgba(220, 38, 38, 0.7)'
-                  }}></div>
-                  <div style={{ textAlign: 'left' }}>
-                    <div style={{ fontSize: '0.82rem', fontWeight: 800, color: '#dc2626' }}>
-                      Listening to your voice...
-                    </div>
-                    <div style={{ fontSize: '0.74rem', color: '#7f1d1d', fontStyle: 'italic' }}>
-                      {transcriptPreview ? `"${transcriptPreview}"` : "Speak now (e.g., 'Find chocolate cake under ₹1000')..."}
-                    </div>
-                  </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span className="pulse-glow" style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#dc2626' }}></span>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 800, color: '#dc2626' }}>
+                    🔴 Listening... Speak naturally
+                  </span>
                 </div>
 
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {transcriptPreview && (
-                    <button
-                      onClick={() => {
-                        const t = transcriptPreview;
-                        stopListening();
-                        handleSendMessage({ customText: t, modality: 'VOICE' });
-                      }}
-                      style={{
-                        background: '#dc2626',
-                        color: '#ffffff',
-                        border: 'none',
-                        padding: '5px 12px',
-                        borderRadius: '8px',
-                        fontSize: '0.75rem',
-                        fontWeight: 700,
-                        cursor: 'pointer'
-                      }}
-                    >
-                      Send Spoken Query
-                    </button>
-                  )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {/* Visual Audio Waveform */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '2px', height: '14px' }}>
+                    {[0.6, 1, 0.4, 0.9, 0.5, 0.8, 0.7].map((factor, bIdx) => (
+                      <div
+                        key={bIdx}
+                        style={{
+                          width: '3px',
+                          height: `${Math.max(4, Math.round((audioLevel || 25) * factor * 0.16))}px`,
+                          background: '#dc2626',
+                          borderRadius: '2px',
+                          transition: 'height 0.1s ease'
+                        }}
+                      />
+                    ))}
+                  </div>
+
                   <button
                     onClick={stopListening}
                     style={{
                       background: '#ffffff',
-                      color: '#475569',
-                      border: '1px solid #cbd5e1',
-                      padding: '5px 10px',
+                      border: '1px solid #fca5a5',
+                      color: '#dc2626',
+                      padding: '4px 10px',
                       borderRadius: '8px',
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
                       cursor: 'pointer'
                     }}
                   >
-                    Cancel
+                    Done Speaking ■
                   </button>
                 </div>
               </div>
@@ -675,16 +691,52 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
                 <Plus size={18} />
               </button>
 
-              {/* Microphone Button [ 🎤 ] */}
-              <button
-                onClick={() => {
-                  if (isListening) {
-                    stopListening();
-                  } else {
-                    startListening();
-                  }
+              {/* Text Input with Live Transcript */}
+              <input
+                ref={inputRef}
+                type="text"
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                placeholder={isListening ? "Listening... Your speech will appear here in real-time" : (attachedImage ? "Ask AI about this image (e.g. 'Find something like this under ₹3,000')..." : "Ask me what you're looking for...")}
+                style={{
+                  flex: 1,
+                  border: 'none',
+                  outline: 'none',
+                  fontSize: '0.98rem',
+                  color: '#0f172a',
+                  background: 'transparent',
+                  padding: '4px 8px'
                 }}
-                title={isListening ? "Stop listening" : "Click to speak using microphone"}
+              />
+
+              {/* Language Selector Pill */}
+              <select
+                value={speechLang}
+                onChange={(e) => setSpeechLang(e.target.value)}
+                title="Voice language"
+                style={{
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '8px',
+                  fontSize: '0.72rem',
+                  fontWeight: 700,
+                  color: '#475569',
+                  padding: '4px 6px',
+                  cursor: 'pointer',
+                  outline: 'none'
+                }}
+              >
+                <option value="en-IN">🇮🇳 en-IN</option>
+                <option value="hi-IN">🇮🇳 hi-IN</option>
+                <option value="ta-IN">🇮🇳 ta-IN</option>
+                <option value="en-US">🇺🇸 en-US</option>
+              </select>
+
+              {/* Microphone Button [ 🎤 / ■ ] */}
+              <button
+                onClick={isListening ? stopListening : startListening}
+                title={isListening ? "Stop recording (Speech preserved in input)" : "Click to speak using microphone"}
                 style={{
                   background: isListening ? '#fee2e2' : '#f8fafc',
                   border: isListening ? '1.5px solid #ef4444' : '1px solid #cbd5e1',
@@ -696,30 +748,16 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  transition: 'all 0.2s ease'
+                  transition: 'all 0.2s ease',
+                  boxShadow: isListening ? '0 0 12px rgba(239, 68, 68, 0.4)' : 'none'
                 }}
               >
-                {isListening ? <MicOff size={18} color="#dc2626" /> : <Mic size={18} color="#7c3aed" />}
+                {isListening ? (
+                  <span style={{ display: 'inline-block', width: '12px', height: '12px', background: '#dc2626', borderRadius: '2px' }} />
+                ) : (
+                  <Mic size={18} color="#7c3aed" />
+                )}
               </button>
-
-              {/* Text Input */}
-              <input
-                ref={inputRef}
-                type="text"
-                value={inputMessage}
-                onChange={(e) => setInputMessage(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                placeholder={attachedImage ? "Ask AI about this image (e.g. 'Find something like this under ₹3,000')..." : "Ask me what you're looking for..."}
-                style={{
-                  flex: 1,
-                  border: 'none',
-                  outline: 'none',
-                  fontSize: '0.98rem',
-                  color: '#0f172a',
-                  background: 'transparent',
-                  padding: '4px 8px'
-                }}
-              />
 
               {/* Send Button */}
               <button
@@ -1101,23 +1139,58 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
                   </div>
                 )}
 
-                {/* Live Listening Indicator */}
+                {/* In-Place Live Listening Indicator */}
                 {isListening && (
                   <div style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '8px',
+                    justifyContent: 'space-between',
                     background: '#fef2f2',
-                    border: '1px solid #fecaca',
-                    padding: '6px 10px',
-                    borderRadius: '10px',
+                    border: '1.5px solid #fecaca',
+                    padding: '8px 12px',
+                    borderRadius: '12px',
                     marginBottom: '8px',
-                    color: '#dc2626',
-                    fontSize: '0.75rem',
-                    fontWeight: 700
+                    animation: 'pulse 1.5s infinite'
                   }}>
-                    <span className="pulse-glow" style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ef4444' }}></span>
-                    Listening... Speak your request now
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span className="pulse-glow" style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#dc2626' }}></span>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#dc2626' }}>
+                        🔴 Listening... Speak naturally
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '2px', height: '12px' }}>
+                        {[0.6, 1, 0.4, 0.9, 0.5, 0.8].map((factor, bIdx) => (
+                          <div
+                            key={bIdx}
+                            style={{
+                              width: '2.5px',
+                              height: `${Math.max(3, Math.round((audioLevel || 20) * factor * 0.14))}px`,
+                              background: '#dc2626',
+                              borderRadius: '2px',
+                              transition: 'height 0.1s ease'
+                            }}
+                          />
+                        ))}
+                      </div>
+
+                      <button
+                        onClick={stopListening}
+                        style={{
+                          background: '#ffffff',
+                          border: '1px solid #fca5a5',
+                          color: '#dc2626',
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                          fontSize: '0.7rem',
+                          fontWeight: 700,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Done Speaking ■
+                      </button>
+                    </div>
                   </div>
                 )}
 
@@ -1151,10 +1224,52 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
                     <Plus size={16} />
                   </button>
 
-                  {/* Microphone Button [ 🎤 ] */}
+                  {/* Input Field with Live Transcript */}
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={inputMessage}
+                    onChange={(e) => setInputMessage(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+                    placeholder={isListening ? "Listening... Speech converts directly to text here" : (attachedImage ? "Ask about this photo (or send)..." : "Ask me what you're looking for...")}
+                    style={{
+                      flex: 1,
+                      border: 'none',
+                      outline: 'none',
+                      fontSize: '0.88rem',
+                      color: '#0f172a',
+                      background: 'transparent',
+                      padding: '4px'
+                    }}
+                  />
+
+                  {/* Language Selector Pill */}
+                  <select
+                    value={speechLang}
+                    onChange={(e) => setSpeechLang(e.target.value)}
+                    title="Voice language"
+                    style={{
+                      background: '#ffffff',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '8px',
+                      fontSize: '0.7rem',
+                      fontWeight: 700,
+                      color: '#475569',
+                      padding: '3px 5px',
+                      cursor: 'pointer',
+                      outline: 'none'
+                    }}
+                  >
+                    <option value="en-IN">🇮🇳 en-IN</option>
+                    <option value="hi-IN">🇮🇳 hi-IN</option>
+                    <option value="ta-IN">🇮🇳 ta-IN</option>
+                    <option value="en-US">🇺🇸 en-US</option>
+                  </select>
+
+                  {/* Microphone Button [ 🎤 / ■ ] */}
                   <button
                     onClick={isListening ? stopListening : startListening}
-                    title={isListening ? "Stop listening" : "Click to speak"}
+                    title={isListening ? "Stop recording (Speech preserved in input)" : "Click to speak"}
                     style={{
                       background: isListening ? '#fee2e2' : '#ffffff',
                       border: isListening ? '1.5px solid #ef4444' : '1px solid #cbd5e1',
@@ -1166,30 +1281,16 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      transition: 'all 0.2s ease'
+                      transition: 'all 0.2s ease',
+                      boxShadow: isListening ? '0 0 10px rgba(239, 68, 68, 0.4)' : 'none'
                     }}
                   >
-                    {isListening ? <MicOff size={16} color="#dc2626" /> : <Mic size={16} />}
+                    {isListening ? (
+                      <span style={{ display: 'inline-block', width: '10px', height: '10px', background: '#dc2626', borderRadius: '2px' }} />
+                    ) : (
+                      <Mic size={16} color="#7c3aed" />
+                    )}
                   </button>
-
-                  {/* Input Field */}
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={inputMessage}
-                    onChange={(e) => setInputMessage(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                    placeholder={attachedImage ? "Ask about this photo (or send)..." : "Ask me what you're looking for..."}
-                    style={{
-                      flex: 1,
-                      border: 'none',
-                      outline: 'none',
-                      fontSize: '0.88rem',
-                      color: '#0f172a',
-                      background: 'transparent',
-                      padding: '4px'
-                    }}
-                  />
 
                   {/* Send Button */}
                   <button
@@ -1210,7 +1311,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
                       transition: 'all 0.2s ease'
                     }}
                   >
-                    <Send size={13} />
+                    Send <Send size={13} />
                   </button>
                 </div>
               </div>
@@ -1613,185 +1714,6 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
                 </button>
               </div>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* VOICE ASSISTANT & LIVE DICTATION MODAL */}
-      {showVoiceModal && (
-        <div className="modal-overlay" onClick={() => {
-          stopListening();
-          setShowVoiceModal(false);
-        }}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '560px', padding: '28px', background: '#ffffff', borderRadius: '24px' }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '42px', height: '42px', borderRadius: '14px', background: isListening ? '#fef2f2' : '#f5f3ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Mic size={22} color={isListening ? "#dc2626" : "#7c3aed"} />
-                </div>
-                <div>
-                  <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#0f172a' }}>AI Voice Shopping Assistant</h3>
-                  <p style={{ fontSize: '0.78rem', color: '#64748b' }}>
-                    {isListening ? '🔴 Listening... Speak into your microphone now' : 'Speak naturally or tap a spoken query below'}
-                  </p>
-                </div>
-              </div>
-              <button onClick={() => {
-                stopListening();
-                setShowVoiceModal(false);
-              }} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontWeight: 700 }}>✕</button>
-            </div>
-
-            {/* Live Dictation / Transcription Area */}
-            <div style={{
-              background: '#f8fafc',
-              border: isListening ? '2px solid #ef4444' : '1px solid #e2e8f0',
-              borderRadius: '16px',
-              padding: '16px',
-              marginBottom: '20px'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: 800, color: isListening ? '#dc2626' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    {isListening ? '🎙️ Live Voice Input' : 'Spoken Voice Query:'}
-                  </span>
-                  {isListening && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '3px', height: '14px' }}>
-                      {[0.6, 1, 0.4, 0.8, 0.5, 0.9, 0.7].map((factor, barIdx) => {
-                        const height = Math.max(4, Math.round((audioLevel || 25) * factor * 0.18));
-                        return (
-                          <div
-                            key={barIdx}
-                            style={{
-                              width: '3px',
-                              height: `${height}px`,
-                              background: '#dc2626',
-                              borderRadius: '2px',
-                              transition: 'height 0.1s ease'
-                            }}
-                          />
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-                <button
-                  onClick={isListening ? stopListening : startListening}
-                  style={{
-                    background: isListening ? '#dc2626' : '#7c3aed',
-                    color: '#ffffff',
-                    border: 'none',
-                    padding: '4px 10px',
-                    borderRadius: '8px',
-                    fontSize: '0.75rem',
-                    fontWeight: 700,
-                    cursor: 'pointer'
-                  }}
-                >
-                  {isListening ? '⏹️ Stop Mic' : '🎤 Start Mic'}
-                </button>
-              </div>
-
-              <input
-                type="text"
-                value={transcriptPreview || inputMessage}
-                onChange={(e) => {
-                  setTranscriptPreview(e.target.value);
-                  setInputMessage(e.target.value);
-                }}
-                placeholder={isListening ? "Listening to your voice... Speak now (or select a prompt below)" : "Type or speak your shopping query..."}
-                style={{
-                  width: '100%',
-                  border: '1px solid #cbd5e1',
-                  background: '#ffffff',
-                  padding: '10px 14px',
-                  borderRadius: '10px',
-                  fontSize: '0.95rem',
-                  color: '#0f172a',
-                  outline: 'none',
-                  boxSizing: 'border-box',
-                  marginBottom: '12px'
-                }}
-              />
-
-              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                <button
-                  onClick={() => {
-                    const txt = (transcriptPreview || inputMessage).trim();
-                    if (txt) {
-                      stopListening();
-                      setShowVoiceModal(false);
-                      handleSendMessage({ customText: txt, modality: 'VOICE' });
-                    }
-                  }}
-                  disabled={!(transcriptPreview || inputMessage).trim()}
-                  className="btn-primary"
-                  style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}
-                >
-                  <Send size={14} /> Send Voice Query
-                </button>
-              </div>
-            </div>
-
-            {/* Quick 1-Tap Spoken Voice Queries */}
-            <div style={{ marginBottom: '16px' }}>
-              <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#7c3aed', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '10px' }}>
-                ⚡ Instant Spoken Voice Queries (1-Tap):
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '240px', overflowY: 'auto' }}>
-                {[
-                  { text: "Find me a chocolate birthday cake under ₹1,000", icon: "🍫" },
-                  { text: "I need black running shoes under ₹4,000", icon: "👟" },
-                  { text: "Add vanilla cake to my cart", icon: "🎂" },
-                  { text: "Remove all cakes from my cart", icon: "🗑️" },
-                  { text: "What's in my cart?", icon: "🛒" },
-                  { text: "Show me laptops under ₹60,000", icon: "💻" },
-                  { text: "What is your refund and return policy?", icon: "❓" }
-                ].map((item, pIdx) => (
-                  <button
-                    key={pIdx}
-                    onClick={() => {
-                      stopListening();
-                      setShowVoiceModal(false);
-                      handleSendMessage({ customText: item.text, modality: 'VOICE' });
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '10px',
-                      background: '#ffffff',
-                      border: '1px solid #e2e8f0',
-                      padding: '10px 14px',
-                      borderRadius: '12px',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      fontSize: '0.82rem',
-                      fontWeight: 600,
-                      color: '#0f172a',
-                      transition: 'all 0.15s ease'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.borderColor = '#7c3aed';
-                      e.currentTarget.style.background = '#f5f3ff';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = '#e2e8f0';
-                      e.currentTarget.style.background = '#ffffff';
-                    }}
-                  >
-                    <span style={{ fontSize: '1.1rem' }}>{item.icon}</span>
-                    <span style={{ flex: 1 }}>"{item.text}"</span>
-                    <span style={{ fontSize: '0.7rem', color: '#7c3aed', fontWeight: 700 }}>Speak & Send ➔</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Permission Guide Accordion */}
-            <div style={{ fontSize: '0.725rem', color: '#64748b', background: '#f8fafc', padding: '10px 12px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
-              💡 <strong>Trouble with microphone?</strong> Click the lock icon 🔒 next to <code>localhost</code> in your address bar and set <strong>Microphone</strong> to <strong>Allow</strong>.
-            </div>
-
           </div>
         </div>
       )}
