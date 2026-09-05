@@ -145,6 +145,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
   // 1. VOICE SHOPPING (WEB SPEECH API + MIC ACCESS)
   // ==========================================
   const startListening = async () => {
+    setShowVoiceModal(true);
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     // Prompt for microphone permissions if getUserMedia is supported
@@ -154,17 +155,11 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
         mediaStreamRef.current = stream;
       } catch (micErr) {
         console.warn('Microphone permission request:', micErr);
-        if (micErr.name === 'NotAllowedError' || micErr.name === 'PermissionDeniedError') {
-          showNotification('Microphone access was blocked. Please enable microphone permissions in your browser or choose a voice prompt.', 'error');
-          setShowVoiceModal(true);
-          return;
-        }
       }
     }
 
     if (!SpeechRecognition) {
-      showNotification('Speech recognition is not supported in this browser. Opening Voice Prompt Assistant.', 'error');
-      setShowVoiceModal(true);
+      showNotification('Browser SpeechRecognition is not supported in this browser. You can select instant spoken voice queries below.', 'error');
       return;
     }
 
@@ -174,13 +169,12 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       }
 
       const recognition = new SpeechRecognition();
-      recognition.continuous = false;
+      recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = navigator.language || 'en-US';
 
       recognition.onstart = () => {
         setIsListening(true);
-        setTranscriptPreview('');
       };
 
       recognition.onresult = (event) => {
@@ -193,29 +187,14 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
           setTranscriptPreview(currentTranscript);
           setInputMessage(currentTranscript);
         }
-
-        const lastResult = event.results[event.results.length - 1];
-        if (lastResult.isFinal) {
-          const finalTranscript = lastResult[0].transcript.trim();
-          if (finalTranscript) {
-            stopListening();
-            handleSendMessage({ customText: finalTranscript, modality: 'VOICE' });
-          }
-        }
       };
 
       recognition.onerror = (event) => {
         console.warn('Speech recognition event error:', event.error);
-        stopListening();
         if (event.error === 'not-allowed' || event.error === 'permission-denied') {
           showNotification('Microphone access was denied. Please allow microphone permissions in browser settings.', 'error');
-          setShowVoiceModal(true);
         } else if (event.error === 'network') {
-          showNotification('Voice speech recognition network issue. Opening Voice Assistant options.', 'error');
-          setShowVoiceModal(true);
-        } else if (event.error !== 'no-speech') {
-          showNotification(`Voice recognition notice (${event.error}). Opening Voice Assistant.`, 'error');
-          setShowVoiceModal(true);
+          showNotification('Voice recognition network issue. You can click any spoken query below.', 'error');
         }
       };
 
@@ -234,8 +213,6 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
     } catch (err) {
       console.error('Failed to start voice recognition:', err);
       setIsListening(false);
-      showNotification('Could not start microphone. Opening Voice Assistant.', 'error');
-      setShowVoiceModal(true);
     }
   };
 
@@ -668,7 +645,13 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
 
               {/* Microphone Button [ 🎤 ] */}
               <button
-                onClick={isListening ? stopListening : startListening}
+                onClick={() => {
+                  if (isListening) {
+                    stopListening();
+                  } else {
+                    startListening();
+                  }
+                }}
                 title={isListening ? "Stop listening" : "Click to speak using microphone"}
                 style={{
                   background: isListening ? '#fee2e2' : '#f8fafc',
@@ -684,7 +667,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
                   transition: 'all 0.2s ease'
                 }}
               >
-                {isListening ? <MicOff size={18} color="#dc2626" /> : <Mic size={18} />}
+                {isListening ? <MicOff size={18} color="#dc2626" /> : <Mic size={18} color="#7c3aed" />}
               </button>
 
               {/* Text Input */}
@@ -1602,52 +1585,122 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
         </div>
       )}
 
-      {/* VOICE ASSISTANT & PERMISSION MODAL */}
+      {/* VOICE ASSISTANT & LIVE DICTATION MODAL */}
       {showVoiceModal && (
-        <div className="modal-overlay" onClick={() => setShowVoiceModal(false)}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '540px', padding: '28px', background: '#ffffff', borderRadius: '24px' }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => {
+          stopListening();
+          setShowVoiceModal(false);
+        }}>
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '560px', padding: '28px', background: '#ffffff', borderRadius: '24px' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: '#fef2f2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Mic size={22} color="#dc2626" />
+                <div style={{ width: '42px', height: '42px', borderRadius: '14px', background: isListening ? '#fef2f2' : '#f5f3ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Mic size={22} color={isListening ? "#dc2626" : "#7c3aed"} />
                 </div>
                 <div>
-                  <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: '#0f172a' }}>Voice Shopping Assistant</h3>
-                  <p style={{ fontSize: '0.75rem', color: '#64748b' }}>Speak naturally or choose a spoken voice prompt below</p>
+                  <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#0f172a' }}>AI Voice Shopping Assistant</h3>
+                  <p style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                    {isListening ? '🔴 Listening... Speak into your microphone now' : 'Speak naturally or tap a spoken query below'}
+                  </p>
                 </div>
               </div>
-              <button onClick={() => setShowVoiceModal(false)} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontWeight: 700 }}>✕</button>
+              <button onClick={() => {
+                stopListening();
+                setShowVoiceModal(false);
+              }} style={{ background: '#f1f5f9', border: 'none', borderRadius: '50%', width: '32px', height: '32px', cursor: 'pointer', fontWeight: 700 }}>✕</button>
             </div>
 
-            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '16px', marginBottom: '20px' }}>
-              <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#0f172a', marginBottom: '8px' }}>
-                🎙️ How to enable live microphone in your browser:
+            {/* Live Dictation / Transcription Area */}
+            <div style={{
+              background: '#f8fafc',
+              border: isListening ? '2px solid #ef4444' : '1px solid #e2e8f0',
+              borderRadius: '16px',
+              padding: '16px',
+              marginBottom: '20px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 800, color: isListening ? '#dc2626' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  {isListening ? '🎙️ Live Voice Input' : 'Spoken Voice Query:'}
+                </span>
+                <button
+                  onClick={isListening ? stopListening : startListening}
+                  style={{
+                    background: isListening ? '#dc2626' : '#7c3aed',
+                    color: '#ffffff',
+                    border: 'none',
+                    padding: '4px 10px',
+                    borderRadius: '8px',
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  {isListening ? '⏹️ Stop Mic' : '🎤 Start Mic'}
+                </button>
               </div>
-              <ul style={{ fontSize: '0.75rem', color: '#475569', lineHeight: 1.5, paddingLeft: '18px', margin: 0 }}>
-                <li>Click the <strong>Lock / Settings</strong> icon on the left of your browser address bar.</li>
-                <li>Set <strong>Microphone</strong> to <strong>Allow</strong>.</li>
-                <li>Ensure your system microphone is plugged in and unmuted.</li>
-              </ul>
+
+              <input
+                type="text"
+                value={transcriptPreview || inputMessage}
+                onChange={(e) => {
+                  setTranscriptPreview(e.target.value);
+                  setInputMessage(e.target.value);
+                }}
+                placeholder={isListening ? "Listening... Your speech will appear here" : "Type or speak your shopping query..."}
+                style={{
+                  width: '100%',
+                  border: '1px solid #cbd5e1',
+                  background: '#ffffff',
+                  padding: '10px 14px',
+                  borderRadius: '10px',
+                  fontSize: '0.95rem',
+                  color: '#0f172a',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                  marginBottom: '12px'
+                }}
+              />
+
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => {
+                    const txt = (transcriptPreview || inputMessage).trim();
+                    if (txt) {
+                      stopListening();
+                      setShowVoiceModal(false);
+                      handleSendMessage({ customText: txt, modality: 'VOICE' });
+                    }
+                  }}
+                  disabled={!(transcriptPreview || inputMessage).trim()}
+                  className="btn-primary"
+                  style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <Send size={14} /> Send Voice Query
+                </button>
+              </div>
             </div>
 
-            <div style={{ marginBottom: '20px' }}>
+            {/* Quick 1-Tap Spoken Voice Queries */}
+            <div style={{ marginBottom: '16px' }}>
               <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#7c3aed', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '10px' }}>
-                ⚡ Or Select Instant Spoken Voice Queries:
+                ⚡ Instant Spoken Voice Queries (1-Tap):
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '240px', overflowY: 'auto' }}>
                 {[
-                  "Find me a chocolate birthday cake under ₹1,000",
-                  "I need black running shoes under ₹4,000",
-                  "Add vanilla cake to my cart",
-                  "Remove all cakes from my cart",
-                  "Show me party accessories and candles",
-                  "What is your refund and return policy?"
-                ].map((voicePrompt, pIdx) => (
+                  { text: "Find me a chocolate birthday cake under ₹1,000", icon: "🍫" },
+                  { text: "I need black running shoes under ₹4,000", icon: "👟" },
+                  { text: "Add vanilla cake to my cart", icon: "🎂" },
+                  { text: "Remove all cakes from my cart", icon: "🗑️" },
+                  { text: "What's in my cart?", icon: "🛒" },
+                  { text: "Show me laptops under ₹60,000", icon: "💻" },
+                  { text: "What is your refund and return policy?", icon: "❓" }
+                ].map((item, pIdx) => (
                   <button
                     key={pIdx}
                     onClick={() => {
+                      stopListening();
                       setShowVoiceModal(false);
-                      handleSendMessage({ customText: voicePrompt, modality: 'VOICE' });
+                      handleSendMessage({ customText: item.text, modality: 'VOICE' });
                     }}
                     style={{
                       display: 'flex',
@@ -1673,26 +1726,19 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
                       e.currentTarget.style.background = '#ffffff';
                     }}
                   >
-                    <span style={{ fontSize: '1.1rem' }}>🎙️</span>
-                    <span style={{ flex: 1 }}>"{voicePrompt}"</span>
+                    <span style={{ fontSize: '1.1rem' }}>{item.icon}</span>
+                    <span style={{ flex: 1 }}>"{item.text}"</span>
                     <span style={{ fontSize: '0.7rem', color: '#7c3aed', fontWeight: 700 }}>Speak & Send ➔</span>
                   </button>
                 ))}
               </div>
             </div>
 
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => {
-                  setShowVoiceModal(false);
-                  startListening();
-                }}
-                className="btn-primary"
-                style={{ fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '6px' }}
-              >
-                <Mic size={15} /> Try Microphone Again
-              </button>
+            {/* Permission Guide Accordion */}
+            <div style={{ fontSize: '0.725rem', color: '#64748b', background: '#f8fafc', padding: '10px 12px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+              💡 <strong>Trouble with microphone?</strong> Click the lock icon 🔒 next to <code>localhost</code> in your address bar and set <strong>Microphone</strong> to <strong>Allow</strong>.
             </div>
+
           </div>
         </div>
       )}
