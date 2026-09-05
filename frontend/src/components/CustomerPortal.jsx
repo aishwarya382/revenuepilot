@@ -9,12 +9,10 @@ import {
   Store,
   HelpCircle,
   Mic,
-  MicOff,
   Plus,
   X
 } from 'lucide-react';
 import RevenueLogo from './RevenueLogo';
-import RazorpayModal from './RazorpayModal';
 
 // Rich Markdown & Visual Formatter for Chat Messages
 function FormattedMessage({ text, sender }) {
@@ -76,7 +74,7 @@ function FormattedMessage({ text, sender }) {
   );
 }
 
-export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdate, onOpenCheckout, onNavigateToOrders }) {
+export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdate, onOpenCheckout, onNavigateToOrders: _onNavigateToOrders }) {
   const customerId = currentUser?.id || 'cust_demo_01';
 
   const [inputMessage, setInputMessage] = useState('');
@@ -90,7 +88,6 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
 
   // Multimodal State: Voice Recognition (ChatGPT-Style In-Place Dictation)
   const [isListening, setIsListening] = useState(false);
-  const [voiceStatus, setVoiceStatus] = useState('IDLE'); // 'IDLE' | 'RECORDING' | 'PROCESSING' | 'ERROR'
   const [speechLang, setSpeechLang] = useState('en-IN'); // Configurable: 'en-IN', 'hi-IN', 'ta-IN', 'en-US'
   const [audioLevel, setAudioLevel] = useState(0);
   const recognitionRef = useRef(null);
@@ -152,26 +149,6 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
     setTimeout(() => setNotification(null), 4500);
   };
 
-  const stopListeningMedia = () => {
-    if (mediaStreamRef.current) {
-      try {
-        mediaStreamRef.current.getTracks().forEach(track => track.stop());
-      } catch { /* ignore */ }
-      mediaStreamRef.current = null;
-    }
-    if (audioContextRef.current) {
-      try {
-        audioContextRef.current.close();
-      } catch { /* ignore */ }
-      audioContextRef.current = null;
-    }
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
-    setAudioLevel(0);
-  };
-
   // Smart Spoken Speech Normalizer (converts spoken numbers, "one thousand rupees" -> "₹1,000", etc.)
   const normalizeSpokenText = (text) => {
     if (!text) return '';
@@ -229,7 +206,6 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
     if (!SpeechRecognition) {
       console.warn('VOICE: error = SpeechRecognition not supported in this browser');
       showNotification("Voice input isn't supported in this browser. You can type your request instead.", 'error');
-      setVoiceStatus('UNSUPPORTED');
       return;
     }
 
@@ -250,7 +226,6 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       recognition.onstart = () => {
         console.log('VOICE: recognition started');
         setIsListening(true);
-        setVoiceStatus('RECORDING');
         setAudioLevel(45);
       };
 
@@ -291,7 +266,6 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       recognition.onerror = (event) => {
         console.warn('VOICE: error =', event.error, event);
         setIsListening(false);
-        setVoiceStatus('ERROR');
         setAudioLevel(0);
 
         if (event.error === 'not-allowed' || event.error === 'permission-denied') {
@@ -308,7 +282,6 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       recognition.onend = () => {
         console.log('VOICE: recognition ended');
         setIsListening(false);
-        setVoiceStatus('IDLE');
         setAudioLevel(0);
         if (inputRef.current) {
           inputRef.current.focus();
@@ -320,7 +293,6 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
     } catch (err) {
       console.error('VOICE: error =', err);
       setIsListening(false);
-      setVoiceStatus('ERROR');
       setAudioLevel(0);
       showNotification('Failed to initialize microphone. Please check browser permissions.', 'error');
     }

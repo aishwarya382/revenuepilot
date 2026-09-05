@@ -226,7 +226,7 @@ export default function App() {
         items={checkoutItems}
         currentUser={currentUser}
         token={token}
-        onOrderCompleted={(order) => {
+        onOrderCompleted={() => {
           fetchCart();
           fetchAuditLogs();
         }}

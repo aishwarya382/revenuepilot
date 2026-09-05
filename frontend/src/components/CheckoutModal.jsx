@@ -9,10 +9,7 @@ import {
   MapPin,
   Package,
   ArrowRight,
-  ArrowLeft,
   X,
-  ShieldCheck,
-  Truck,
   Plus,
   Lock,
   RefreshCw
@@ -435,7 +432,7 @@ export default function CheckoutModal({
               { id: 'summary', label: '2. Summary' },
               { id: 'payment', label: '3. Payment' },
               { id: 'confirmation', label: '4. Done' }
-            ].map((s, idx) => {
+            ].map((s) => {
               const isCompleted =
                 (s.id === 'address' && step !== 'address') ||
                 (s.id === 'summary' && (step === 'payment' || step === 'confirmation')) ||

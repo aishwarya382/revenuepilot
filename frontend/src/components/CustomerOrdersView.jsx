@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Package, Clock, ShoppingBag, ArrowRight, MapPin, CreditCard, Smartphone, Landmark, Banknote, CheckCircle2 } from 'lucide-react';
+import { Package, Clock, ShoppingBag, ArrowRight, MapPin, CreditCard, Smartphone, Landmark, Banknote } from 'lucide-react';
 
 export default function CustomerOrdersView({ currentUser, onNavigateToShop }) {
   const customerId = currentUser?.id;
