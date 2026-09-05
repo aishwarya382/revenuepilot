@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShoppingBag, Sparkles, Package, FileText, Settings, ShieldCheck, Zap, Store } from 'lucide-react';
+import { Package, FileText, ShieldCheck, Zap, Store } from 'lucide-react';
 
 export default function Sidebar({ currentUser, activeTab, setActiveTab, onOpenAuditLog }) {
   const isMerchant = currentUser?.role === 'merchant';

@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShoppingCart, X, Trash2, ArrowRight, Package } from 'lucide-react';
+import { ShoppingCart, Trash2, ArrowRight } from 'lucide-react';
 
 export default function CartDrawer({ isOpen, onClose, cartData, onRemoveItem, onCheckout }) {
   if (!isOpen) return null;

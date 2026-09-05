@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { Package, Clock, CheckCircle2, AlertCircle, ShoppingBag, ArrowRight } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Package, Clock, ShoppingBag, ArrowRight } from 'lucide-react';
 
 export default function CustomerOrdersView({ currentUser, onNavigateToShop }) {
   const customerId = currentUser?.id;
   const [orders, setOrders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async () => {
     if (!customerId) {
       setIsLoading(false);
       return;
@@ -23,11 +23,11 @@ export default function CustomerOrdersView({ currentUser, onNavigateToShop }) {
       console.error(err);
       setIsLoading(false);
     }
-  };
+  }, [customerId]);
 
   useEffect(() => {
     fetchOrders();
-  }, [customerId]);
+  }, [fetchOrders]);
 
   return (
     <div style={{ padding: '28px 32px', maxWidth: '1100px', margin: '0 auto', fontFamily: "'Inter', sans-serif" }} className="animate-fade-in">

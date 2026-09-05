@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, FileText, CheckCircle2, AlertTriangle, Clock, ShieldCheck, Filter, ShieldAlert } from 'lucide-react';
+import { X, FileText, Clock, ShieldCheck, ShieldAlert } from 'lucide-react';
 
 export default function AuditTrailDrawer({ isOpen, onClose, auditLogs }) {
   const [filter, setFilter] = useState('ALL');

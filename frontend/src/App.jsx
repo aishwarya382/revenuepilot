@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from './context/AuthContext';
 import AuthScreen from './components/AuthScreen';
 import Header from './components/Header';
@@ -29,14 +29,12 @@ export default function App() {
       if (currentUser.role === 'merchant') {
         setActiveTab('merchant');
       } else {
-        if (activeTab === 'merchant') {
-          setActiveTab('customer');
-        }
+        setActiveTab(prev => (prev === 'merchant' ? 'customer' : prev));
       }
     }
   }, [currentUser]);
 
-  const fetchCart = async () => {
+  const fetchCart = useCallback(async () => {
     if (!currentUser || currentUser.role === 'merchant') return;
     try {
       const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
@@ -48,9 +46,9 @@ export default function App() {
     } catch (err) {
       console.error('Cart fetch error:', err);
     }
-  };
+  }, [currentUser, token]);
 
-  const fetchAuditLogs = async () => {
+  const fetchAuditLogs = useCallback(async () => {
     try {
       const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
       const res = await fetch('http://localhost:8000/api/audit-logs', { headers });
@@ -61,7 +59,7 @@ export default function App() {
     } catch (err) {
       console.error('Audit fetch error:', err);
     }
-  };
+  }, [token]);
 
   useEffect(() => {
     if (currentUser) {
@@ -73,7 +71,7 @@ export default function App() {
       }, 5000);
       return () => clearInterval(interval);
     }
-  }, [currentUser, token]);
+  }, [currentUser, fetchCart, fetchAuditLogs]);
 
   const handleLogout = () => {
     logout();

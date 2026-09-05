@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { CreditCard, AlertTriangle, RefreshCw, CheckCircle, X, ShieldAlert, Zap, Lock } from 'lucide-react';
 
 export default function RazorpayModal({ orderData, onClose, onSuccess, onFailure }) {
-  const [isSimulatingFailure, setIsSimulatingFailure] = useState(false);
   const [failureResult, setFailureResult] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
 

@@ -6,18 +6,12 @@ import {
   CheckCircle2,
   AlertCircle,
   Eye,
-  ExternalLink,
-  Globe,
   Store,
   HelpCircle,
   Mic,
   MicOff,
   Plus,
-  Image as ImageIcon,
-  X,
-  Volume2,
-  Tag,
-  ShoppingBag
+  X
 } from 'lucide-react';
 import RevenueLogo from './RevenueLogo';
 import RazorpayModal from './RazorpayModal';
@@ -35,7 +29,7 @@ function FormattedMessage({ text, sender }) {
         if (!trimmed) return <div key={lIdx} style={{ height: '4px' }} />;
 
         const isBullet = trimmed.startsWith('•') || trimmed.startsWith('-') || trimmed.startsWith('* ');
-        const cleanContent = isBullet ? trimmed.replace(/^[•\-\*]\s*/, '') : trimmed;
+        const cleanContent = isBullet ? trimmed.replace(/^[•\-*]\s*/, '') : trimmed;
 
         // Split by **bold** tags
         const parts = cleanContent.split(/(\*\*.*?\*\*)/g);
@@ -96,7 +90,6 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
 
   // Multimodal State: Voice Recognition
   const [isListening, setIsListening] = useState(false);
-  const [speechError, setSpeechError] = useState(null);
   const recognitionRef = useRef(null);
 
   // System Notification
@@ -126,7 +119,9 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
       if (recognitionRef.current) {
         try {
           recognitionRef.current.abort();
-        } catch (_) {}
+        } catch {
+          // ignore abort error
+        }
       }
     };
   }, []);
@@ -159,7 +154,6 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
 
       recognition.onstart = () => {
         setIsListening(true);
-        setSpeechError(null);
       };
 
       recognition.onresult = (event) => {
@@ -200,7 +194,9 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
-      } catch (_) {}
+      } catch {
+        // ignore stop error
+      }
     }
     setIsListening(false);
   };
@@ -1511,7 +1507,7 @@ export default function CustomerPortal({ currentUser, onCartUpdate, onAuditUpdat
             if (onAuditUpdate) onAuditUpdate();
           }}
           onFailure={(err) => {
-            showNotification('Payment simulation failed', 'error');
+            showNotification(err?.message || 'Payment simulation failed', 'error');
             if (onAuditUpdate) onAuditUpdate();
           }}
         />

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   LayoutDashboard,
   Package,
@@ -9,32 +9,21 @@ import {
   Calculator,
   Megaphone,
   History,
-  Settings as SettingsIcon,
   Store,
   Plus,
   ArrowRight,
   CheckCircle2,
   Trash2,
-  ShieldCheck,
   Tag,
   DollarSign,
-  AlertCircle,
-  HelpCircle,
-  Sliders,
-  CreditCard,
-  Clock,
-  Eye,
-  Search,
   FlaskConical,
-  Zap,
   Check,
   AlertTriangle,
-  Layers,
-  ArrowUpRight,
   Edit3,
   XCircle,
-  SlidersHorizontal,
-  Target
+  Search,
+  Settings as SettingsIcon,
+  CreditCard
 } from 'lucide-react';
 import RevenueLogo from './RevenueLogo';
 
@@ -54,7 +43,6 @@ export default function MerchantPortal({ currentUser, onAuditUpdate }) {
   const [auditLogs, setAuditLogs] = useState([]);
   const [labData, setLabData] = useState(null);
   const [smartDiscountsData, setSmartDiscountsData] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
 
   // What-If Simulator Interactive State
   const [simulatorProduct, setSimulatorProduct] = useState(null);
@@ -98,7 +86,7 @@ export default function MerchantPortal({ currentUser, onAuditUpdate }) {
   // Search/Filter State
   const [productSearch, setProductSearch] = useState('');
 
-  const fetchMerchantData = async () => {
+  const fetchMerchantData = useCallback(async () => {
     if (!merchantId) return;
     try {
       setIsLoading(true);
@@ -147,11 +135,11 @@ export default function MerchantPortal({ currentUser, onAuditUpdate }) {
       console.error('Fetch merchant data error:', err);
       setIsLoading(false);
     }
-  };
+  }, [merchantId, simulatorProduct, labMainProduct]);
 
   useEffect(() => {
     fetchMerchantData();
-  }, [merchantId]);
+  }, [fetchMerchantData]);
 
   const handleUploadProduct = async (e) => {
     e.preventDefault();

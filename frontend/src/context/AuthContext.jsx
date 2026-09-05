@@ -17,7 +17,7 @@ export const AuthProvider = ({ children }) => {
     if (cached) {
       try {
         return JSON.parse(cached);
-      } catch (_) {
+      } catch {
         return null;
       }
     }
@@ -45,7 +45,7 @@ export const AuthProvider = ({ children }) => {
               'Content-Type': 'application/json'
             }
           });
-        } catch (err) {
+        } catch {
           res = await fetch('/api/auth/me', {
             headers: {
               'Authorization': `Bearer ${storedToken}`,
@@ -90,14 +90,14 @@ export const AuthProvider = ({ children }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password, role })
       });
-    } catch (networkErr) {
+    } catch {
       try {
         res = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email, password, role })
         });
-      } catch (fallbackErr) {
+      } catch {
         throw new Error('Unable to connect to the server. Please try again.');
       }
     }
@@ -137,7 +137,7 @@ export const AuthProvider = ({ children }) => {
           role
         })
       });
-    } catch (networkErr) {
+    } catch {
       try {
         res = await fetch('/api/auth/signup', {
           method: 'POST',
@@ -150,7 +150,7 @@ export const AuthProvider = ({ children }) => {
             role
           })
         });
-      } catch (fallbackErr) {
+      } catch {
         throw new Error('Unable to connect to the server. Please try again.');
       }
     }
@@ -183,7 +183,9 @@ export const AuthProvider = ({ children }) => {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${token}` }
         }).catch(() => {});
-      } catch (err) {}
+      } catch {
+        // ignore logout network error
+      }
     }
     localStorage.removeItem('rp_access_token');
     localStorage.removeItem('currentUser');

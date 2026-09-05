@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-export default function RevenueLogo({ size = 64, withGlow = true, animated = true, className = '' }) {
+export default function RevenueLogo({ size = 64, withGlow = true, _animated = true, className = '' }) {
   const [isHovered, setIsHovered] = useState(false);
   const width = size;
   const height = (size * 60) / 64;

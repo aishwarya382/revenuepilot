@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShoppingCart, Zap, LogOut, User, ShieldCheck, Package } from 'lucide-react';
+import { ShoppingCart, Zap, LogOut, ShieldCheck, Package } from 'lucide-react';
 import RevenueLogo from './RevenueLogo';
 
 export default function Header({ currentUser, activeTab, setActiveTab, onOpenAuditLog, onOpenCart, cartCount = 0, onLogout }) {
